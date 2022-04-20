@@ -25,6 +25,8 @@ from rich import print as rprint
 from rich.traceback import install
 
 
+sns.color_palette("Spectral", as_cmap=True)
+
 color_map_pastel = [
     "rgb(102, 197, 204)",
     "rgb(246, 207, 113)",
@@ -303,7 +305,6 @@ def get_scanpy_umap(adata, seed=42):
     # scanpy preprocessing + umap
     seed_everything(seed)
     adata_scanpy = scanpy_preprocessing(adata)
-    rprint(adata_scanpy.shape)
     umap_scanpy = UMAP().fit(adata_scanpy.X)
     graph_scanpy_umap = umap_scanpy.graph_
     embedding_scanpy_umap = umap_scanpy.transform(adata_scanpy.X)
@@ -381,7 +382,7 @@ def get_hv(adata, n_top_genes=2000):
         stds = adata.std(axis=0).A.flatten()
     else:
         raise NotImplementedError
-    return adata[:, np.argsort(stds)[-n_top_genes:]]
+    return adata[:, np.argsort(stds)[-n_top_genes:]].copy()
 
 
 def plot_clustermap(graphs: ss.spmatrix, names: str, output_file: str) -> None:
@@ -390,15 +391,16 @@ def plot_clustermap(graphs: ss.spmatrix, names: str, output_file: str) -> None:
         for j, g2 in enumerate(graphs):
             dists[j, i] = dists[i, j] = dist(g1, g2)
 
-    sns.clustermap(
+    fig = sns.clustermap(
         dists,
         cmap="magma",
         xticklabels=names,
         yticklabels=names,
         figsize=(15, 15),
+        linewidths=0.5,
     )
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
-    plt.savefig(output_file)
+    fig.savefig(output_file)
 
 
 def std(spmatrix, axis):
@@ -408,16 +410,35 @@ def std(spmatrix, axis):
     return std
 
 
-def dowmsample_exper(adata, func, i) -> None:
+def shuffle(spmatrix: ss.spmatrix) -> ss.spmatrix:
+    """shuffle the values and their position in a symmetric sparse matrix (keep the symmetry)."""
+    dense = spmatrix.todense()
+    upper = squareform(dense)
+    # diag = np.diag(dense)  # diag must be zero, or squareform will not work
+    upper = np.random.permutation(upper)
+    dense = squareform(upper)
+    # dense[np.diag_indices_from(dense)] = diag
+    if isinstance(spmatrix, ss.csr_matrix):
+        return ss.csr_matrix(dense)
+    elif isinstance(spmatrix, ss.csc_matrix):
+        return ss.csc_matrix(dense)
+    else:
+        raise ValueError("Unknown matrix type")
+
+
+def downsample_exper(adata, func, i, num_repeats, xs) -> None:
     name = func.__name__.replace("get_", "")
-    num_repeats = 5
-    dists = []
-    corrs = []
-    for _ in tqdm(range(num_repeats)):
-        graphs = []
-        for downsample in tqdm(np.linspace(1, 0.1, 10)):
+    if i > 6:
+        name += "_hv"
+    os.makedirs(f"data/downsample_exper/{name}", exist_ok=True)
+    for repeat_i in tqdm(range(num_repeats)):
+        adata_downsampled = adata
+        for downsample in tqdm(xs[:-1]):
+            down_ratio = adata.shape[1] * downsample / adata_downsampled.shape[1]
             sampled_genes = np.random.choice(
-                adata.shape[1], int(adata.shape[1] * downsample), replace=False
+                adata_downsampled.shape[1],
+                int(adata_downsampled.shape[1] * down_ratio),
+                replace=False,
             )
             adata_downsampled = adata[:, sampled_genes]
             if i <= 6:
@@ -426,32 +447,81 @@ def dowmsample_exper(adata, func, i) -> None:
                 graph, emb = func(
                     adata_downsampled, hv=True, seed=np.random.randint(0, 100)
                 )
+            # save graph and emb
+            ss.save_npz(f"data/downsample_exper/{name}/graph_{repeat_i}.npz", graph)
+            np.save(f"data/downsample_exper/{name}/emb_{repeat_i}.npy", np.array(emb))
+
+
+def jaccard(graph1, graph2):
+    intersec = graph1.multiply(graph2).astype(bool).sum()
+    union = graph1.astype(bool).sum() + graph2.astype(bool).sum() - intersec
+    return intersec / union
+
+
+def downsample_plot(adata, func, i, num_repeats, xs) -> None:
+    name = func.__name__.replace("get_", "")
+    if i > 6:
+        name += "_hv"
+    os.makedirs(f"figs/downsample_exper/{name}", exist_ok=True)
+    dists = []
+    corrs_raw = []
+    corrs_nonzero = []
+    jacs = []
+    gs = []
+    for repeat_i in tqdm(range(num_repeats)):
+        graphs = []
+        for downsample in tqdm(xs[:-1]):
+            graph = ss.load_npz(f"data/downsample_exper/{name}/graph_{repeat_i}.npz")
+            emb = np.load(f"data/downsample_exper/{name}/emb_{repeat_i}.npy")
             graphs.append(graph)
             plot(
                 emb,
-                adata_downsampled.obs["batch"],
-                f"figs/{name}/batch_{downsample}.png",
+                adata.obs["batch"],
+                f"figs/{name}/{repeat_i}/batch_{downsample:.1f}_emb.png",
             )
             plot(
                 emb,
-                adata_downsampled.obs["celltype"],
-                f"figs/{name}/label_{downsample}.png",
+                adata.obs["celltype"],
+                f"figs/{name}/{repeat_i}/label_{downsample:.1f}_emb.png",
             )
-        dists.append([dist(g_down, graphs[0]) for g_down in graphs])
-        corrs.append(
-            [
-                spearmanr(
-                    squareform(g_down.todense()), squareform(graphs[0].todense())
-                ).correlation
-                for g_down in graphs
-            ]
-        )
 
-    xs = np.stack([np.linspace(1, 0.1, 10) for _ in range(num_repeats)])
+        graphs.append(shuffle(graphs[0]))
+
+        gs.append(graphs)
+        dists.append([dist(g_down, graphs[0]) for g_down in graphs])
+
+        raws = []
+        nonzeros = []
+        g0 = squareform(graphs[0].todense())
+        for g_down in graphs:
+            g = squareform(g_down.todense())
+            raws.append(spearmanr(g, g0).correlation)
+            either_non_zero = np.logical_or(g, g0)
+            g_ = g[either_non_zero]
+            g0_ = g0[either_non_zero]
+            nonzeros.append(spearmanr(g_, g0_).correlation)
+        corrs_raw.append(raws)
+        corrs_nonzero.append(nonzeros)
+        jacs.append([jaccard(g_down, graphs[0]) for g_down in graphs])
+
+    gs = np.array(gs)
+
+    for i, x in enumerate(xs[:-1]):
+        # "interconsistency"
+        graphs = gs[:, i]
+        ns = list(map(lambda x: f"rep-{x}", range(len(graphs))))
+        graphs = np.append(graphs, shuffle(graphs[0]))
+        ns.append("shuffled-0")
+        plot_clustermap(graphs, ns, f"figs/{name}/consistency_{x:.1f}.png")
+
+    xs = np.stack([xs for _ in range(num_repeats)])
     dists = np.array(dists)
     corrs = np.array(corrs)
 
-    for ys in [dists, corrs]:
+    for ys, postfix in zip(
+        [dists, corrs_raw, corrs_nonzero, jacs],
+        ["dist", "corr_raw", "corr_nonzero", "jaccard"],
+    ):
         fig, ax = plt.subplots(figsize=(10, 10))
         ax.invert_xaxis()
         line_df = pd.DataFrame(
@@ -478,9 +548,8 @@ def dowmsample_exper(adata, func, i) -> None:
         )
         ax.fill_between(xs[0], mean - std, mean + std, alpha=0.2)
         ax.legend(loc="center left", bbox_to_anchor=(1, 0.5))
-
-        os.makedirs(f"figs/{name}", exist_ok=True)
-        fig.savefig(f"figs/{name}/downsample.png")
+        sns.despine(fig)
+        fig.savefig(f"figs/{name}/downsample_{postfix}.png")
 
 
 if __name__ == "__main__":
@@ -495,107 +564,110 @@ if __name__ == "__main__":
     rprint(adata.shape)
 
     # all genes
-    # graph_raw, embedding_raw = get_raw(adata)
-    # graph_l1, embedding_l1 = get_l1(adata)
-    # graph_zscore, embedding_zscore = get_zscore(adata)
-    # graph_pca, embedding_pca = get_pca(adata)
-    # graph_l1_pca, embedding_l1_pca = get_l1_pca(adata)
+    graph_raw, embedding_raw = get_raw(adata)
+    graph_l1, embedding_l1 = get_l1(adata)
+    graph_zscore, embedding_zscore = get_zscore(adata)
+    graph_pca, embedding_pca = get_pca(adata)
+    graph_l1_pca, embedding_l1_pca = get_l1_pca(adata)
 
-    # # scanpy feature selection
-    # adata_scanpy = scanpy_preprocessing(adata)
-    # graph_scanpy, embedding_scanpy = get_scanpy(adata)
-    # graph_scanpy_umap, embedding_scanpy_umap = get_scanpy_umap(adata)
+    # scanpy feature selection
+    adata_scanpy = scanpy_preprocessing(adata)
+    graph_scanpy, embedding_scanpy = get_scanpy(adata)
+    graph_scanpy_umap, embedding_scanpy_umap = get_scanpy_umap(adata)
 
-    # # 2000 highly variable genes
-    # graph_raw_hv, embedding_raw_hv = get_raw(adata, hv=True)
-    # graph_l1_hv, embedding_l1_hv = get_l1(adata, hv=True)
-    # graph_zscore_hv, embedding_zscore_hv = get_zscore(adata, hv=True)
-    # graph_pca_hv, embedding_pca_hv = get_pca(adata, hv=True)
-    # graph_l1_pca_hv, embedding_l1_pca_hv = get_l1_pca(adata, hv=True)
+    # 2000 highly variable genes
+    graph_raw_hv, embedding_raw_hv = get_raw(adata, hv=True)
+    graph_l1_hv, embedding_l1_hv = get_l1(adata, hv=True)
+    graph_zscore_hv, embedding_zscore_hv = get_zscore(adata, hv=True)
+    graph_pca_hv, embedding_pca_hv = get_pca(adata, hv=True)
+    graph_l1_pca_hv, embedding_l1_pca_hv = get_l1_pca(adata, hv=True)
 
-    # # plot distance matrix
-    # graphs = [
-    #     graph_raw,
-    #     graph_l1,
-    #     graph_zscore,
-    #     graph_pca,
-    #     graph_l1_pca,
-    #     graph_scanpy,
-    #     graph_scanpy_umap,
-    #     graph_raw_hv,
-    #     graph_l1_hv,
-    #     graph_zscore_hv,
-    #     graph_pca_hv,
-    #     graph_l1_pca_hv,
-    # ]
-    # names = [
-    #     "raw",
-    #     "l1",
-    #     "zscore",
-    #     "pca",
-    #     "l1_pca",
-    #     "scanpy",
-    #     "scanpy_umap",
-    #     "raw_hv",
-    #     "l1_hv",
-    #     "zscore_hv",
-    #     "pca_hv",
-    #     "l1_pca_hv",
-    # ]
-    # plot_clustermap(graphs, names, f"figs/full/comp_preproc.png")
+    # plot distance matrix
+    graphs = [
+        graph_raw,
+        graph_l1,
+        graph_zscore,
+        graph_pca,
+        graph_l1_pca,
+        graph_scanpy,
+        graph_scanpy_umap,
+        graph_raw_hv,
+        graph_l1_hv,
+        graph_zscore_hv,
+        graph_pca_hv,
+        graph_l1_pca_hv,
+    ]
+    names = [
+        "raw",
+        "l1",
+        "zscore",
+        "pca",
+        "l1_pca",
+        "scanpy",
+        "scanpy_umap",
+        "raw_hv",
+        "l1_hv",
+        "zscore_hv",
+        "pca_hv",
+        "l1_pca_hv",
+    ]
+    plot_clustermap(graphs, names, f"figs/full/comp_preproc.png")
 
-    # for emb, name in zip(
-    #     [
-    #         embedding_raw,
-    #         embedding_l1,
-    #         embedding_l1_pca,
-    #         embedding_zscore,
-    #         embedding_pca,
-    #         embedding_scanpy,
-    #         embedding_scanpy_umap,
-    #         embedding_raw_hv,
-    #         embedding_l1_hv,
-    #         embedding_zscore_hv,
-    #         embedding_pca_hv,
-    #         embedding_l1_pca_hv,
-    #     ],
-    #     [
-    #         "raw",
-    #         "l1",
-    #         "l1+pca",
-    #         "zscore",
-    #         "pca",
-    #         "scanpy",
-    #         "scanpy+umap",
-    #         "raw+hv",
-    #         "l1+hv",
-    #         "zscore+hv",
-    #         "pca+hv",
-    #         "l1+pca+hv",
-    #     ],
-    # ):
-    #     plot(emb, adata.obs["celltype"], f"figs/full/{name}_label.png")
-    #     plot(emb, adata.obs["batch"], f"figs/full/{name}_batch.png")
+    for emb, name in zip(
+        [
+            embedding_raw,
+            embedding_l1,
+            embedding_l1_pca,
+            embedding_zscore,
+            embedding_pca,
+            embedding_scanpy,
+            embedding_scanpy_umap,
+            embedding_raw_hv,
+            embedding_l1_hv,
+            embedding_zscore_hv,
+            embedding_pca_hv,
+            embedding_l1_pca_hv,
+        ],
+        [
+            "raw",
+            "l1",
+            "l1+pca",
+            "zscore",
+            "pca",
+            "scanpy",
+            "scanpy+umap",
+            "raw+hv",
+            "l1+hv",
+            "zscore+hv",
+            "pca+hv",
+            "l1+pca+hv",
+        ],
+    ):
+        plot(emb, adata.obs["celltype"], f"figs/full/{name}_label.png")
+        plot(emb, adata.obs["batch"], f"figs/full/{name}_batch.png")
 
     # the downsample experiment
-    Parallel(n_jobs=12)(
-        delayed(dowmsample_exper)(adata, func, i)
-        for i, func in enumerate(
-            tqdm(
-                [
-                    get_raw,
-                    get_l1,
-                    get_zscore,
-                    get_pca,
-                    get_l1_pca,
-                    get_scanpy,
-                    get_scanpy_umap,
-                    get_raw,
-                    get_l1,
-                    get_zscore,
-                    get_pca,
-                    get_l1_pca,
-                ]
+    for f in [downsample_exper]:
+        Parallel(n_jobs=8)(
+            delayed(f)(adata, func, i, num_repeats=8, xs=np.linspace(1, 0, 11))
+            for i, func in enumerate(
+                tqdm(
+                    [
+                        get_raw,
+                        get_l1,
+                        get_zscore,
+                        get_pca,
+                        get_l1_pca,
+                        get_scanpy,
+                        get_scanpy_umap,
+                        get_raw,
+                        get_l1,
+                        get_zscore,
+                        get_pca,
+                        get_l1_pca,
+                    ]
+                )
             )
         )
-    )
+
+    # downsample_exper(adata, get_raw, 0)

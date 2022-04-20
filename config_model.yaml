@@ -1,0 +1,64 @@
+# backbone
+emb_dim: 192
+depth: 12
+num_heads: 3
+mlp_ratio: 4
+qkv_bias: True
+encoder_normalize_before: False
+embedding_normalize: True
+# positional encoding
+rel_pos_bins: 256
+max_rel_pos: 1024
+max_count: 10000
+# head
+head_hid_dim: 512
+head_bottleneck_dim: 64
+out_dim: 512
+patch_out_dim: 512
+norm_in_head: Null
+act_in_head: gelu
+dropout_in_head: 0
+norm_last_layer: False  # Whether or not to weight normalize the last layer of the head. Not normalizing leads to better performance but can make the training unstable. In our experiments, we typically set this paramater to False with vit_small and True with vit_base.
+shared_head: False  # Whether to share the same head for [CLS] token output and patch tokens output. When set to false, patch_out_dim is ignored and enforced to be same with out_dim.
+shared_head_t: True  # See above. Only works for teacher model.
+# stochastic depth
+drop_path: 0.1
+
+# loss
+# ibot
+warmup_teacher_temp: 0.04
+teacher_temp: 0.04
+warmup_teacher_patch_temp: 0.04
+teacher_patch_temp: 0.07
+warmup_teacher_temp_epochs: 30
+# moco
+num_negs: 8192
+moco_temp: 0.07
+# bert
+temp_gene: 0.8
+temp_count: 0.8
+# weights
+lambda_ibot_ss: 0.1
+lambda_ibot_st: 0.1
+lambda_ibot_gene: 0.1
+lambda_ibot_count: 0.1
+lambda_moco: 1
+lambda_bert_gene: 5
+lambda_bert_count: 5
+
+# optimizer
+optimizer: adamw
+lr: 5.e-4
+min_lr: 1.e-6
+adam_betas: [0.9, 0.999]
+momentum_t: 0.996  # increased to 1 during training with cosine schedule
+weight_decay: 0.04 
+weight_decay_end: 0.4
+warmup_epochs: 10
+freeze_last_layer: 1  # Number of epochs during which we keep the output layer fixed. Typically doing so during the first epoch helps training. Try increasing this value if the loss does not decrease.
+epochs: 100
+grad_clip: 3.0
+
+# logging
+monitor: val/ari
+mode: max

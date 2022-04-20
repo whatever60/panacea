@@ -1,3 +1,5 @@
+from functools import lru_cache
+
 import numpy as np
 import torch
 from torch import nn
@@ -86,6 +88,7 @@ class iBOTLoss(nn.Module):
         patch_s_l: list,
         mask_l: list,
         epoch: float,
+        calc_contrastive_loss=True,
     ):
         """
         Cross-entropy between softmax outputs of the teacher and student networks.
@@ -105,33 +108,36 @@ class iBOTLoss(nn.Module):
         cls_t_l = [((i - self.center) / temp).softmax(dim=-1) for i in cls_t_l]
         patch_t_l = [((i - self.center2) / temp2).softmax(dim=-1) for i in patch_t_l]
 
-        # different views between students
-        total_loss0, n_loss_terms0 = 0, 0
-        for v1 in range(len(cls_s_l)):
-            for v2 in range(len(cls_s_l)):
-                if v1 == v2:
-                    continue
-                # [batch_size]
-                loss0 = torch.sum(
-                    -cls_s_l[v1].softmax(dim=-1) * cls_s_l[v2].log_softmax(dim=-1),
-                    dim=-1,
-                )
-                total_loss0 += loss0.mean()
-                n_loss_terms0 += 1
-        total_loss0 = total_loss0 / n_loss_terms0 if n_loss_terms0 > 0 else 0.0
+        if calc_contrastive_loss:
+            # different views between students
+            total_loss0, n_loss_terms0 = 0, 0
+            for v1 in range(len(cls_s_l)):
+                for v2 in range(len(cls_s_l)):
+                    if v1 == v2:
+                        continue
+                    # [batch_size]
+                    loss0 = torch.sum(
+                        -cls_s_l[v1].softmax(dim=-1) * cls_s_l[v2].log_softmax(dim=-1),
+                        dim=-1,
+                    )
+                    total_loss0 += loss0.mean()
+                    n_loss_terms0 += 1
+            total_loss0 = total_loss0 / n_loss_terms0 if n_loss_terms0 > 0 else 0.0
 
-        # different views between student and teacher, contrastive loss
-        total_loss1, n_loss_terms1 = 0, 0
-        for q in range(len(cls_t_l)):
-            for v in range(len(cls_s_l)):
-                # [batch_size]
-                loss1 = torch.sum(
-                    -cls_t_l[q] * cls_s_l[v].log_softmax(dim=-1),
-                    dim=-1,
-                )
-                total_loss1 += loss1.mean()
-                n_loss_terms1 += 1
-        total_loss1 = total_loss1 / n_loss_terms1
+            # different views between student and teacher, contrastive loss
+            total_loss1, n_loss_terms1 = 0, 0
+            for q in range(len(cls_t_l)):
+                for v in range(len(cls_s_l)):
+                    # [batch_size]
+                    loss1 = torch.sum(
+                        -cls_t_l[q] * cls_s_l[v].log_softmax(dim=-1),
+                        dim=-1,
+                    )
+                    total_loss1 += loss1.mean()
+                    n_loss_terms1 += 1
+            total_loss1 = total_loss1 / n_loss_terms1
+        else:
+            total_loss0 = total_loss1 = None
 
         # the same view, mask modeling loss
         total_loss2, n_loss_terms2 = 0, 0
@@ -226,6 +232,22 @@ class MAELoss(nn.Module):
             n_loss_terms += 1
         total_loss = total_loss / n_loss_terms
         return total_loss
+
+
+class BERTLoss(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.loss = nn.CrossEntropyLoss()
+
+    def forward(self, targets_l, preds_l, masks_l):
+        # targets: [num_masks_in_batch, out_dim]
+        total_loss, n_loss_terms = 0, 0
+        for targets, preds, masks in zip(targets_l, preds_l, masks_l):
+            total_loss += self.loss(preds[masks], targets)
+            n_loss_terms += 1
+
+        loss = total_loss / n_loss_terms
+        return loss
 
 
 class MoCoLoss(nn.Module):

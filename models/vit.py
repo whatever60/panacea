@@ -1,3 +1,10 @@
+"""
+TODO:
+- Mask modeling (mask genes, mask count, BERT-style masking) ✅
+- Model arch change (embedding nad positional encoding) ✅
+- Change loss to classification loss ✅
+"""
+
 from functools import partial
 import math
 
@@ -190,10 +197,7 @@ class VisionTransformer(nn.Module):
 
     def __init__(
         self,
-        img_size=[224],
-        patch_size=16,
-        in_channels=3,
-        num_classes=0,
+        vocab_size,
         embed_dim=768,
         depth=12,
         num_heads=12,
@@ -213,12 +217,8 @@ class VisionTransformer(nn.Module):
         self.num_features = self.embed_dim = embed_dim
         self.return_all_tokens = return_all_tokens
 
-        self.patch_embed = PatchEmbed(
-            img_size=img_size[0],
-            patch_size=patch_size,
-            in_channels=in_channels,
-            embed_dim=embed_dim,
-        )
+        self.gene_embedding = nn.Embedding(vocab_size, embed_dim)
+
         num_patches = self.patch_embed.num_patches
 
         self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))

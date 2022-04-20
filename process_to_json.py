@@ -25,13 +25,13 @@ json_list = []
 genes = pd.read_csv(f"{data_dir}/{gene_file}", sep="\t", header=None).squeeze("columns")
 
 tokenizer = Tokenizer(WordLevel(unk_token="[UNK]"))
+tokenizer.pad_token = tokenizer.token_to_id("[PAD]")
 trainer = WordLevelTrainer(
     special_tokens=["[UNK]", "[CLS]", "[SEP]", "[PAD]", "[MASK]"]
 )
 tokenizer.pre_tokenizer = WhitespaceSplit()
 files = [f"{data_dir}/genes.txt"]
 tokenizer.train(files, trainer)
-tokenizer.pad_token = tokenizer.token_to_id("[PAD]")
 tokenizer.save(f"{out_dir}/tokenizer.json")
 
 cell_meta = pd.read_csv(f"{data_dir}/{cell_file}", sep="\t")
@@ -48,6 +48,7 @@ count_df = pd.read_csv(
 )
 count_df.cell_idx -= 1
 count_df.gene -= 1
+rprint(count_df["count"].max())
 
 
 def get_cell_data(group) -> None:

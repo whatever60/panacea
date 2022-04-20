@@ -21,6 +21,7 @@ class DINOHead(nn.Module):
         out_dim,
         norm=None,
         act="gelu",
+        dropout_p=0.0,
         last_norm=None,
         nlayers=3,
         hidden_dim=512,
@@ -34,6 +35,7 @@ class DINOHead(nn.Module):
         norm = self._build_norm(norm, hidden_dim)
         last_norm = self._build_norm(last_norm, out_dim, affine=False, **kwargs)
         act = self._build_act(act)
+        dropout = nn.Dropout(dropout_p) if dropout_p else None
 
         nlayers = max(nlayers, 1)
         if nlayers == 1:
@@ -46,11 +48,15 @@ class DINOHead(nn.Module):
             if norm is not None:
                 layers.append(norm)
             layers.append(act)
+            if dropout is not None:
+                layers.append(dropout)
             for _ in range(nlayers - 2):
                 layers.append(nn.Linear(hidden_dim, hidden_dim))
                 if norm is not None:
                     layers.append(norm)
                 layers.append(act)
+                if dropout is not None:
+                    layers.append(dropout)
             if bottleneck_dim > 0:
                 layers.append(nn.Linear(hidden_dim, bottleneck_dim))
             else:
@@ -106,6 +112,8 @@ class DINOHead(nn.Module):
             act = nn.ReLU()
         elif act == "gelu":
             act = nn.GELU()
+        elif act == "tanh":
+            act = nn.Tanh()
         else:
             assert False, "unknown act type {}".format(act)
         return act
@@ -114,12 +122,14 @@ class DINOHead(nn.Module):
 class iBOTHead(DINOHead):
     def __init__(
         self,
-        start_dim,
+        num_genes,
+        max_count,
         in_dim,
         out_dim,
         patch_out_dim,
         norm=None,
         act="gelu",
+        dropout_p=0.0,
         last_norm=None,
         nlayers=3,
         hidden_dim=512,
@@ -134,6 +144,7 @@ class iBOTHead(DINOHead):
             out_dim=out_dim,
             norm=norm,
             act=act,
+            dropout_p=dropout_p,
             last_norm=last_norm,
             nlayers=nlayers,
             hidden_dim=hidden_dim,
@@ -168,7 +179,8 @@ class iBOTHead(DINOHead):
 
         # reconstruction head
         in_dim_recon = bottleneck_dim if bottleneck_dim > 0 else hidden_dim
-        self.recon_head = nn.Linear(in_dim_recon, start_dim, bias=False)
+        self.pred_gene_head = nn.Linear(in_dim_recon, num_genes, bias=False)
+        self.pred_count_head = nn.Linear(in_dim_recon, max_count, bias=False)
 
     def forward(self, x):
         # x: [batch_size * num_crops, 1+H*W, out_dim]
@@ -189,6 +201,7 @@ class iBOTHead(DINOHead):
             x1 = self.last_norm(x1)
             x2 = self.last_norm2(x2)
 
-        x3 = self.recon_head(x[:, 1:]).tanh().relu()
+        preds_gene = self.pred_gene_head(x[:, 1:])
+        preds_count = self.pred_count_head(x[:, 1:])
 
-        return x, x1, x2, x3
+        return x, x1, x2, preds_gene, preds_count
