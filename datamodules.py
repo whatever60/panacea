@@ -1,4 +1,4 @@
-from typing import Literal, Tuple
+from typing import List, Literal, Tuple
 import numpy as np
 from torch.utils.data import Dataset, DataLoader
 import pytorch_lightning as pl
@@ -34,7 +34,7 @@ class SingleCellDataset(Dataset):
         # max_count: int,
         log_count: bool,
         count_temp: bool,
-        zero_prop: float,
+        zero_prob: float,
         # ==========
         mask_prop_gene: float,
         mask_prop_count: float,
@@ -72,7 +72,7 @@ class SingleCellDataset(Dataset):
         # self.max_count = max_count
         self.log_count = log_count
         self.count_temp = count_temp
-        self.zero_prop = zero_prop
+        self.zero_prob = zero_prob
 
         self.mask_prop_gene = mask_prop_gene
         self.mask_prop_count = mask_prop_count
@@ -115,38 +115,21 @@ class SingleCellDataset(Dataset):
         sample = self.dataset[self.split][index]
         count = np.array(sample["count"].split(" ")).astype(int)
         gene = np.array(sample["input_ids"])
-        count_raw = np.zeros(self.num_genes)
-        count_raw[gene - self.num_special_tokens] = count
+        count_raw = self.to_raw(gene, count)
         sample["count_raw"] = count_raw
 
         # 加noise和sampling谁先谁后会有很大区别吗
         dropout_p_g = [0] + [self.dropout_p_g] * (self.num_crops_g - 1)
         dropout_p_l = [self.dropout_p_l] * self.num_crops_l
-        count_g = [self.add_noise(count, self.noise_ratio_g, p) for p in dropout_p_g]
-        count_l = [self.add_noise(count, self.noise_ratio_l, p) for p in dropout_p_l]
+        # noise is only added to non-zero counts.
+        count_g = self.add_noise(count, self.noise_ratio_g, dropout_p_g)
+        count_l = self.add_noise(count, self.noise_ratio_l, dropout_p_l)
 
-        gene_g, count_g = zip(
-            *(
-                self._sample_random(
-                    gene,
-                    count,
-                    self.min_length_g,
-                    self.mean_length_g,
-                    self.max_length_g,
-                )
-                for count in count_g
-            )
-        )
+        gene_g, count_g = zip(*(self._sample_random(gene, count) for count in count_g))
         if self.num_crops_l:
             gene_l, count_l = zip(
                 *(
-                    self._sample_random(
-                        gene,
-                        count,
-                        self.min_length_l,
-                        self.mean_length_l,
-                        self.max_length_l,
-                    )
+                    self._sample_random(gene, count, is_global=False)
                     for count in count_l
                 )
             )
@@ -168,6 +151,7 @@ class SingleCellDataset(Dataset):
         del sample["attention_mask"]
         del sample["token_type_ids"]
         del sample["library"]
+
         sample["gene"], sample["count"], sample["mask"] = genes, counts, masks
         if sample["celltype"] is None:
             sample["celltype"] = "nan"
@@ -182,67 +166,84 @@ class SingleCellDataset(Dataset):
     def tokenize_function(self, samples):
         return self.tokenizer(samples["gene"])
 
-    def get_mask(self, length_input):
-        if self.mask_prop_gene:
-            mask_gene = np.random.binomial(
-                1, self.mask_prop_gene + self.mask_prop_count, length_input
-            )
-        else:
-            mask_gene = np.zeros(length_input)
+    def to_raw(self, g, c):
+        count_raw = np.zeros(self.num_genes, dtype=c.dtype)
+        count_raw[g - self.num_special_tokens] = c
+        return count_raw
 
-        if self.mask_prop_count:
-            mask_count = np.random.binomial(
-                1,
-                self.mask_prop_count / (self.mask_prop_gene + self.mask_prop_count),
-                length_input,
-            )
-        else:
-            mask_count = np.zeros(length_input)
+    def get_mask(self, length_input):
+        mask_gene = np.random.binomial(
+            1, self.mask_prop_gene + self.mask_prop_count, length_input
+        )
+
+        mask_count = np.random.binomial(
+            1,
+            self.mask_prop_count / (self.mask_prop_gene + self.mask_prop_count),
+            length_input,
+        )
 
         # 0 for non-mask, 1 for gene mask, 2 for count mask
         mask = mask_gene + mask_count * mask_gene
         return mask
 
     @staticmethod
-    def add_noise(counts, noise_ratio, dropout_p):
-        res = counts
+    def add_noise(
+        counts: np.ndarray, noise_ratio: float, dropout_p: List[float]
+    ) -> List[np.ndarray]:
+        """
+        counts: 1d array
+        noise_ratio: float
+        dropout_p: 1d array
+        """
+        num_genes = len(counts)
+        num_crops = len(dropout_p)
         if noise_ratio:
-            noise = (np.random.rand(counts.shape[0]) * 2 - 1) * noise_ratio * 2
-            res = counts * (1 + noise)
+            noise = np.random.randn(num_crops, num_genes) * noise_ratio
+            res = counts[None] * (1 + noise)  # + noise * 5
+        else:
+            res = counts[None]
         if dropout_p:
-            res = counts * np.random.binomial(1, 1 - dropout_p, len(counts))
-        return res.round().astype(int)
+            dropout = np.stack([1 - np.random.rand(num_genes) * p for p in dropout_p])
+            res = (res * dropout).clip(min=0).round().astype(int)
+        return list(res)
 
     def _sample_random(
-        self, gene, count, min_length, mean_length, max_length
+        self, gene, count, is_global: bool = True
     ) -> Tuple[np.ndarray, np.ndarray]:
-        count_raw = np.zeros(self.num_genes, dtype=int)
-        count_raw[gene - self.num_special_tokens] = count
+        if is_global:
+            min_length = self.min_length_g
+            mean_length = self.mean_length_g
+            max_length = self.max_length_g
+        else:
+            min_length = self.min_length_l
+            mean_length = self.mean_length_l
+            max_length = self.max_length_l
+
+        count_raw = self.to_raw(gene, count)
         if self.log_count:
             # give small prob to zero count.
             p = np.log1p(count_raw / self.count_temp) + np.log1p(
-                self.zero_prop / self.count_temp
+                self.zero_prob / self.count_temp
             )
         else:
-            p = count_raw + self.zero_prop
+            p = count_raw + self.zero_prob
         p /= p.sum()
 
-        length_dist = "sample"
-        if length_dist == "sample":
-            # deal with the case when
+        if self.length_dist == "sample":
+            p = p * mean_length
             while True:
                 rands = np.random.rand(self.num_genes)
-                mask = rands < p * mean_length
+                mask = rands < p
                 sampled_gene_ids = np.arange(self.num_genes)[mask]
                 if min_length <= len(sampled_gene_ids) <= max_length:
                     break
-        elif length_dist == "uniform":
+        elif self.length_dist == "uniform":
             sample_size = np.random.randint(min_length, max_length + 1)
             sampled_gene_ids = np.random.choice(self.num_genes, sample_size, p=p)
         else:
             raise NotImplementedError
 
-        return sampled_gene_ids, count_raw[sampled_gene_ids]
+        return sampled_gene_ids + self.num_special_tokens, count_raw[sampled_gene_ids]
 
     def pad(
         self, genes: list, counts: list, masks: list, max_length: int
@@ -251,7 +252,8 @@ class SingleCellDataset(Dataset):
         counts_padded = []
         masks_padded = []
         gene_pad = self.tokenizer.pad_token_id
-        count_pad = mask_pad = -1
+        count_pad = -3
+        mask_pad = -1
         for gene, count, mask in zip(genes, counts, masks):
             pad_len = max_length - len(gene)
             genes_padded.append(np.concatenate([gene, [gene_pad] * pad_len]))

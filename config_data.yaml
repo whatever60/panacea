@@ -16,30 +16,30 @@ vocab_size: 14900
 num_special_tokens: 5
 num_genes: 14895
 cls_idx: 1
-padding_idx: 3
+padding_idx: 4
 mask_idx: 4
-#
+# global crops
 num_crops_g: 2
-min_length_g: 128
-mean_length_g: 256
-max_length_g: 384
-noise_ratio_g: 0.02
-dropout_p_g: 0.1
-#
+min_length_g: 256
+mean_length_g: 384
+max_length_g: 512
+noise_ratio_g: 0.08
+dropout_p_g: 0.2
+# local crops
 num_crops_l: 2
 min_length_l: 64
 mean_length_l: 128
 max_length_l: 256
-noise_ratio_l: 0.02
-dropout_p_l: 0.1
-#
+noise_ratio_l: 0.08
+dropout_p_l: 0.2
+# sample genes
 length_dist: "sample"
 log_count: True
-count_temp: 5
-zero_prop: 0.2
-#
+count_temp: 4  # the higher the less zero and more high count
+zero_prob: 0.1  # the higher the more zero
+# generate mask
 mask_prop_gene: 0.15
 mask_prop_count: 0.15
-#
+# other
 batch_size: 8
 pred_start_epoch: 0

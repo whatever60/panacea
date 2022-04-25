@@ -142,7 +142,7 @@ class TransformerSentenceEncoder(nn.Module):
         self.attn_scale_factor = 2
         self.num_heads = num_heads
         # extra 4 for cls-to-others, others-to-cls, mask-to-others, and others-to-mask
-        self.pos = nn.Embedding(self.max_seq_len + 5, self.emb_dim, padding_idx=0)
+        self.pos = nn.Embedding(self.max_seq_len + 4, self.emb_dim, padding_idx=0)
         self.pos_q_linear = nn.Linear(self.emb_dim, self.emb_dim)
         self.pos_k_linear = nn.Linear(self.emb_dim, self.emb_dim)
         self.pos_scaling = (
@@ -209,13 +209,12 @@ class TransformerSentenceEncoder(nn.Module):
 
     def get_rel_pos_bias(self, counts, mask_count=None):
         # counts, mask_count: [b, max_length].
-        # context_position = torch.arange(seq_len, dtype=torch.long)[:, None]
-        # memory_position = torch.arange(seq_len, dtype=torch.long)[None, :]
+        # return [b, 1+max_length, 1+max_length]
 
         if not self.rel_pos:
             return None
 
-        counts = self.add_cls(counts, -123)
+        counts = self.add_cls(counts, -123)  # doesn't matter
         if mask_count is not None:
             mask_count = self.add_cls(mask_count, False)
 
@@ -250,15 +249,13 @@ class TransformerSentenceEncoder(nn.Module):
         values = values.permute([0, 3, 1, 2])
         return values.contiguous()  # [b, num_heads, max_length, max_length]
 
-    def get_abs_pos_bias(self, counts, mask_count=None, padding_mask=None):
+    def get_abs_pos_bias(self, counts, mask_count=None):
         # [b, max_length]
         batch_size, seq_len = counts.shape
         # 0 is for other-to-cls 1 is for cls-to-other
         # Assume the input is ordered. If your input token is permuted, you may need to update this accordingly
         # [b, max_length, emb_dim]
-        counts = counts.clip(max=self.max_seq_len - 1)
-        if padding_mask is not None:
-            counts[padding_mask] = self.max_seq_len
+        counts = counts.clip(0, self.max_seq_len - 1)
         weight = self.pos_ln(self.pos(counts))
 
         to_head = lambda x: x.view(*x.shape[:-1], self.num_heads, -1)
@@ -291,9 +288,8 @@ class TransformerSentenceEncoder(nn.Module):
         )
         return abs_pos_bias.transpose(1, 3)  # [b, h, l, l]
 
-    def get_abs_pos_bias_sinusoidal(self, counts, mask_count=None):
-        # [b, max_length]
-        counts = self.mask_model(counts, mask_count, -1)
+    def get_abs_pos_bias_sinusoidal(self, counts):
+        # [b, max_length]. -3 for pad, -2 for cls, -1 for mask.
         counts = self.add_cls(counts, -2)
         abs_pos_bias_sinusoidal = get_embedding(counts + 2, self.emb_dim)
         # if padding_mask is not None:
@@ -316,21 +312,25 @@ class TransformerSentenceEncoder(nn.Module):
         padding_mask = tokens.eq(self.padding_idx)
         if not padding_mask.any():
             padding_mask = None
+        else:
+            padding_mask = self.add_cls(padding_mask, False)
+
+        tokens = self.mask_model(tokens, mask_gene, self.mask_idx, self.vocab_size)
+        counts = self.mask_model(counts, mask_count, -1, self.max_seq_len)
 
         # positional encoding
         # [b, 1+max_length, length, length]
-        abs_pos_bias = self.get_abs_pos_bias(counts, mask_count, padding_mask)
+        mask_count = counts == -1
+        abs_pos_bias = self.get_abs_pos_bias(counts, mask_count)
+        abs_pos_bias_sin = self.get_abs_pos_bias_sinusoidal(counts)
         rel_pos_bias = self.get_rel_pos_bias(counts, mask_count)
         if rel_pos_bias is not None:
             abs_pos_bias += rel_pos_bias
         abs_pos_bias = abs_pos_bias.flatten(end_dim=1)
 
-        tokens = self.mask_model(tokens, mask_gene, self.mask_idx)
         tokens = self.add_cls(tokens, self.cls_idx)
-        padding_mask = self.add_cls(padding_mask, False)
         # [b, length, emb_dim]
-        x = self.embed_tokens(tokens)
-        x += self.get_abs_pos_bias_sinusoidal(counts, mask_count)
+        x = self.embed_tokens(tokens) + abs_pos_bias_sin
 
         if self.embed_scale is not None:
             x *= self.embed_scale
@@ -377,7 +377,7 @@ class TransformerSentenceEncoder(nn.Module):
         x = x.transpose(0, 1)
         return x
 
-    def mask_model(self, x, mask, mask_token):
+    def mask_model(self, x, mask, mask_token, max_):
         """80% to mask token, 10% to random token, 10% not modified.
         x: [b, max_length]
         """
@@ -389,7 +389,7 @@ class TransformerSentenceEncoder(nn.Module):
         random_mask = (
             torch.bernoulli(torch.full_like(x, 0.5).float()).bool() & real_mask
         )
-        x[random_mask] = torch.randint_like(x, self.vocab_size, dtype=torch.long)
+        x[random_mask] = torch.randint_like(x[random_mask], high=max_, dtype=torch.long)
         return x
 
     def add_cls(self, x, cls_value):

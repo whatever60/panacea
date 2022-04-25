@@ -7,12 +7,14 @@ TODO:
 
 import math
 from functools import lru_cache
+from typing import Literal
 
 import torch
 from torch import nn
 import torch.nn.functional as F
 import pytorch_lightning as pl
 from torchmetrics import Accuracy
+from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 
 from datamodules import PanaceaDataModule
 from models import (
@@ -140,33 +142,53 @@ class Panacea(pl.LightningModule):
         log.update({f"{stage}/moco_acc": moco_acc, f"{stage}/loss_moco": loss_moco})
 
         # bert loss
-        counts_g = [count.clip(0, self.hparams.max_count - 1) for count in counts_g]
+        counts = [count.clip(0, self.hparams.max_count - 1) for count in counts]
         count_raw = count_raw.clip(0, self.hparams.max_count - 1)
         targets_gene = [
-            self.get_target_genes(c, count_raw, m)
-            for c, m in zip(counts_g, masks_gene_g)
+            self.get_target_genes(g, count_raw, m) for g, m in zip(genes, masks_gene)
         ]
         targets_count = [
-            self.get_target_counts(c, m) for c, m in zip(counts_g, masks_count_g)
+            self.get_target_counts(c, m) for c, m in zip(counts, masks_count)
         ]
 
-        loss_bert_t_gene = self.loss_bert(targets_gene, preds_gene_t_l, masks_gene_g)
+        loss_bert_t_gene = self.loss_bert(
+            targets_gene[:num_crops_g], preds_gene_t_l, masks_gene[:num_crops_g]
+        )
         loss_bert_t_count = self.loss_bert(
-            targets_count, preds_count_t_l, masks_count_g
+            targets_count[:num_crops_g], preds_count_t_l, masks_count[:num_crops_g]
         )
-        loss_bert_s_gene = self.loss_bert(
-            targets_gene, preds_gene_s_l[:num_crops_g], masks_gene_g
+        loss_bert_s_gene_g = self.loss_bert(
+            targets_gene[:num_crops_g],
+            preds_gene_s_l[:num_crops_g],
+            masks_gene[:num_crops_g],
         )
-        loss_bert_s_count = self.loss_bert(
-            targets_count, preds_count_s_l[:num_crops_g], masks_count_g
+        loss_bert_s_count_g = self.loss_bert(
+            targets_count[:num_crops_g],
+            preds_count_s_l[:num_crops_g],
+            masks_count[:num_crops_g],
         )
+        if len(genes) > num_crops_g:
+            loss_bert_s_gene_l = self.loss_bert(
+                targets_gene[num_crops_g:],
+                preds_gene_s_l[num_crops_g:],
+                masks_gene[num_crops_g:],
+            )
+            loss_bert_s_count_l = self.loss_bert(
+                targets_count[num_crops_g:],
+                preds_count_s_l[num_crops_g:],
+                masks_count[num_crops_g:],
+            )
+        else:
+            loss_bert_s_gene_l = loss_bert_s_count_l = 0.0
 
         log.update(
             {
                 f"{stage}/loss_bert_t_gene": loss_bert_t_gene,
-                f"{stage}/loss_bert_s_gene": loss_bert_s_gene,
                 f"{stage}/loss_bert_t_count": loss_bert_t_count,
-                f"{stage}/loss_bert_s_count": loss_bert_s_count,
+                f"{stage}/loss_bert_s_gene_g": loss_bert_s_gene_g,
+                f"{stage}/loss_bert_s_count_g": loss_bert_s_count_g,
+                f"{stage}/loss_bert_s_gene_l": loss_bert_s_gene_l,
+                f"{stage}/loss_bert_s_count_l": loss_bert_s_count_l,
             }
         )
 
@@ -176,8 +198,10 @@ class Panacea(pl.LightningModule):
             + loss_ibot_patch_gene * self.hparams.lambda_ibot_gene
             + loss_ibot_patch_count * self.hparams.lambda_ibot_count
             + loss_moco * self.hparams.lambda_ibot_count
-            + loss_bert_s_gene * self.hparams.lambda_bert_gene
-            + loss_bert_s_count * self.hparams.lambda_bert_count
+            + loss_bert_s_gene_g * self.hparams.lambda_bert_gene_g
+            + loss_bert_s_count_g * self.hparams.lambda_bert_count_g
+            + loss_bert_s_gene_l * self.hparams.lambda_bert_gene_l
+            + loss_bert_s_count_l * self.hparams.lambda_bert_count_l
         )
 
         log.update({f"{stage}/loss": loss})
@@ -308,7 +332,7 @@ class Panacea(pl.LightningModule):
             activation_fn="gelu",
             rel_pos=True,
             rel_pos_bins=self.hparams.rel_pos_bins,
-            max_rel_pos=self.hparams.max_rel_pos,
+            max_rel_pos=self.hparams.max_count,
         )
         student = TransformerSentenceEncoder(**kwargs)
         kwargs["drop_path"] = 0
@@ -430,51 +454,50 @@ class Panacea(pl.LightningModule):
             {"params": not_regularized, "weight_decay": 0.0},
         ]
 
-    def get_target_genes(self, counts, count_raw, mask):
+    def get_target_genes(self, genes, count_raw, mask):
         """masked gene -> predict gene idx
         Prob of genes is given by Negative Binomial distribution
         """
-        count_raw = count_raw.float().clip(1e-8)
-        idx = torch.arange(counts.shape[0]).view(-1, 1).expand_as(counts)[mask]
-        means = counts[mask]
-        targets = torch.stack(
-            [
-                nb_pmf(count_raw[i], self.hparams.temp_gene, m)
-                for i, m in zip(idx, means)
-            ],
-        )
+        idx = torch.arange(mask.shape[0]).view(-1, 1).expand_as(mask)[mask]
+        means = count_raw[idx, genes[mask] - self.hparams.num_special_tokens]
+        targets = nb_pmf(means, self.hparams.temp_gene, count_raw[idx], "gene")
         targets /= targets.sum(dim=1, keepdim=True)
-        if targets.isnan().any():
-            import pdb; pdb.set_trace()
         return targets  # [num_masks_in_batch, num_genes]
 
     def get_target_counts(self, counts: torch.Tensor, mask: torch.Tensor):
         """masked count -> predict count
         Label smoothing with Negative Binomial distribution
         """
-        means = counts[mask].float().clip(1e-8)  # 1d
-        targets = torch.stack(
-            [
-                nb_pmf(
-                    m,
-                    self.hparams.temp_count,
-                    torch.arange(self.hparams.max_count, device=means.device),
-                )
-                for m in means
-            ],
+        means = counts[mask]  # 1d
+        targets = nb_pmf(
+            means,
+            self.hparams.temp_count,
+            torch.arange(self.hparams.max_count, device=means.device),
+            "count",
         )
         targets /= targets.sum(dim=1, keepdim=True)
-        if targets.isnan().any():
-            import pdb; pdb.set_trace()
         return targets  # [num_masks_in_batch, max_count]
 
 
 # @lru_cache(maxsize=None)
-def nb_pmf(m: torch.Tensor, p: float, v: torch.Tensor):
-    # m and v can be multidimensional, but only one of them can.
-    # m cannot be zero, or the result will be zero for all v.
-    k = m * (1 - p) / p
+def nb_pmf(
+    m: torch.Tensor, p: float, v: torch.Tensor, flavor: Literal["gene", "count"]
+) -> torch.Tensor:
+    """
+    When flavor is `gene`, m is 1d tensor ([m]) and v is 2d tensors ([m, n]). Return shape is [m, n].
+    When flavor is `count`, m ([m]) and v ([v]) are 1d tensors, and return shape is [m, v].
+    m is nonzero. v can be zero.
+    """
+    k = (m - 0.5) * (1 - p) / p + 1 / p
+    # k = k.clip(1e-8)
     logits = torch.tensor(p / (1 - p), device=k.device).log()
+    if flavor == "count":
+        k = k.unsqueeze(1)
+        v = v.unsqueeze(0)
+    elif flavor == "gene":
+        k = k.unsqueeze(1)
+    else:
+        raise NotImplementedError
     log_unnormalized_prob = k * F.logsigmoid(-logits) + v * F.logsigmoid(logits)
 
     log_normalization = -torch.lgamma(k + v) + torch.lgamma(1.0 + v) + torch.lgamma(k)
@@ -501,6 +524,50 @@ def train_func(config_data: dict, config_model: dict):
         trainer.fit(model, datamodule)
         return
 
+    callbacks = [
+        # LogPredictionsCallback(),
+        ModelCheckpoint(
+            monitor=config["monitor"],
+            mode=config["mode"],
+            auto_insert_metric_name=False,
+            every_n_epochs=10,
+            # save_top_k=5,
+            # save_last=True,
+        ),
+        LearningRateMonitor(logging_interval="step"),
+    ]
+    wandb_logger = pl.loggers.WandbLogger(
+        project=PROJECT,
+        group=GROUP,
+        # name=name,
+        log_model="all",
+        # log_model=True,
+        save_code=True,  # this won't work.
+    )
+    trainer_config = dict(
+        deterministic=True,
+        callbacks=callbacks,
+        logger=wandb_logger,
+        # log_every_n_steps=30,
+        max_epochs=config["epochs"],
+        gradient_clip_val=config["grad_clip"],
+    )
+
+    if STRATEGY == "ddp":
+        wandb_logger.watch(model, log="all", log_freq=500)
+        trainer_config["strategy"] = "ddp"
+        trainer_config["gpus"] = config["gpus"]
+    else:
+        raise NotImplementedError
+        # trainer_config["num_sanity_val_steps"] = 0
+        # os.environ["CUDA_VISIBLE_DEVICES"] = ",".join([str(i) for i in config["gpus"]])
+        # trainer_config["strategy"] = RayPlugin(
+        #     num_workers=len(config["gpus"]), num_cpus_per_worker=4, use_gpu=True
+        # )
+
+    trainer = pl.Trainer(**trainer_config)
+    trainer.fit(model, datamodule)
+
 
 if __name__ == "__main__":
     import argparse
@@ -515,7 +582,7 @@ if __name__ == "__main__":
     parser.add_argument("--gpus", type=int, nargs="+", default=[0])
     # parser.add_argument("--num_batches", type=int, default=1, choices=[0, 1, 2, 4])
     args = parser.parse_args()
-    # NUM_BATCHES = args.num_batches
+
     with open("config_data.yaml") as f:
         config_data = yaml.safe_load(f)
     with open("config_model.yaml") as f:
@@ -524,10 +591,8 @@ if __name__ == "__main__":
     config_model["gpus"] = args.gpus
 
     DATA_DIR = "/home/tiankang/wusuowei/data/single_cell/panacea"
-
     PROJECT = "panacea"
     GROUP = "test"
-    STRATEGY = "ray"
     STRATEGY = "ddp"
-    FAST_DEV_RUN = True
+    FAST_DEV_RUN = False
     train_func(config_data, config_model)

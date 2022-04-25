@@ -5,5 +5,8 @@ from .wrappers import MultiCropWrapper
 from .batchnorms import CSyncBatchNorm, PSyncBatchNorm, CustomSequential
 from .schedulers import linear_warmup, cosine_scheduler, LinearWarmupCosineAnnealingLR
 from .multihead_attention import MultiheadAttention
-from .transformer_sentence_encoder import TransformerSentenceEncoder
+from .transformer_sentence_encoder import (
+    TransformerSentenceEncoder,
+    relative_position_bucket,
+)
 from .transformer_sentence_encoder import TransformerSentenceEncoderLayer

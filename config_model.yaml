@@ -8,7 +8,7 @@ encoder_normalize_before: False
 embedding_normalize: True
 # positional encoding
 rel_pos_bins: 256
-max_rel_pos: 1024
+# max_rel_pos: 1024
 max_count: 10000
 # head
 head_hid_dim: 512
@@ -35,16 +35,18 @@ warmup_teacher_temp_epochs: 30
 num_negs: 8192
 moco_temp: 0.07
 # bert
-temp_gene: 0.8
-temp_count: 0.8
+temp_gene: 0.3
+temp_count: 0.3
 # weights
 lambda_ibot_ss: 0.1
 lambda_ibot_st: 0.1
 lambda_ibot_gene: 0.1
 lambda_ibot_count: 0.1
 lambda_moco: 1
-lambda_bert_gene: 5
-lambda_bert_count: 5
+lambda_bert_gene_g: 1
+lambda_bert_count_g: 1
+lambda_bert_gene_l: 0.1
+lambda_bert_count_l: 0.1
 
 # optimizer
 optimizer: adamw
