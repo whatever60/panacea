@@ -243,7 +243,7 @@ class BERTLoss(nn.Module):
         # targets: [num_masks_in_batch, out_dim]
         preds = torch.stack(preds_l)[torch.stack(masks_l)]
         return self.loss(preds, torch.cat(targets_l))
-        
+
         total_loss, n_loss_terms = 0, 0
         for targets, preds, masks in zip(targets_l, preds_l, masks_l):
             total_loss += self.loss(preds[masks], targets)

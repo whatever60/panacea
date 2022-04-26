@@ -145,7 +145,7 @@ class SingleCellDataset(Dataset):
 
         gene_g, count_g, mask_g = self.pad(gene_g, count_g, mask_g, self.max_length_g)
         gene_l, count_l, mask_l = self.pad(gene_l, count_l, mask_l, self.max_length_l)
-        
+
         assert all(i.dtype == np.int64 for i in count_g), [i.dtype for i in count_g]
 
         genes = gene_g + gene_l
@@ -167,12 +167,18 @@ class SingleCellDataset(Dataset):
         sample["batch_idx"] = self.batches.index(sample["batch"])
 
         assert sample["count_raw"].dtype == np.int64, sample["count_raw"].dtype
-    
-        assert all(i.dtype == np.int64 for i in sample["count"]), [i.dtype for i in sample["count"]]
 
-        assert all(i.dtype == np.int64 for i in sample["mask"]), [i.dtype for i in sample["mask"]]
+        assert all(i.dtype == np.int64 for i in sample["count"]), [
+            i.dtype for i in sample["count"]
+        ]
 
-        assert all(i.dtype == np.int64 for i in sample["gene"]), [i.dtype for i in sample["gene"]]
+        assert all(i.dtype == np.int64 for i in sample["mask"]), [
+            i.dtype for i in sample["mask"]
+        ]
+
+        assert all(i.dtype == np.int64 for i in sample["gene"]), [
+            i.dtype for i in sample["gene"]
+        ]
 
         return sample
 
@@ -374,6 +380,5 @@ if __name__ == "__main__":
             rprint([(i.shape, i.dtype) for i in v])
         elif not isinstance(v, Sequence):
             rprint(v)
-    
-    # for sample in datamodule.train_dataloader():
 
+    # for sample in datamodule.train_dataloader():

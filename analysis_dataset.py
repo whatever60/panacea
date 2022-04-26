@@ -220,20 +220,14 @@ for i, c in enumerate(count_g_raw):
     df = pd.concat(
         [
             df,
-            pd.DataFrame(
-                dict(
-                    x=np.arange(100), y=get_interval(c), hue=f"global-{i}"
-                )
-            ),
+            pd.DataFrame(dict(x=np.arange(100), y=get_interval(c), hue=f"global-{i}")),
         ]
     ).reset_index(drop=True)
 for i, c in enumerate(count_l_raw):
     df = pd.concat(
         [
             df,
-            pd.DataFrame(
-                dict(x=np.arange(100), y=get_interval(c), hue=f"local-{i}")
-            ),
+            pd.DataFrame(dict(x=np.arange(100), y=get_interval(c), hue=f"local-{i}")),
         ]
     ).reset_index(drop=True)
 sns.lineplot(data=df, x="x", y="y", hue="hue", ax=ax, alpha=0.5)
@@ -253,7 +247,11 @@ lgd = ax.legend(
     shadow=True,
 )
 # https://stackoverflow.com/questions/10101700/moving-matplotlib-legend-outside-of-the-axis-makes-it-cutoff-by-the-figure-box
-fig.savefig("figs/analysis_dataset/count_interval_noisy.jpg", bbox_extra_artists=(lgd,), bbox_inches='tight')
+fig.savefig(
+    "figs/analysis_dataset/count_interval_noisy.jpg",
+    bbox_extra_artists=(lgd,),
+    bbox_inches="tight",
+)
 plt.close(fig)
 
 # sample prob
@@ -322,7 +320,9 @@ plot_custom_color(
 # after sampling
 for i, (g, c, m) in enumerate(zip(genes, counts, masks)):
     pad_len = 25 if i < self.num_crops_g else 15
-    plot_custom_color(*to_img(dataset, g, c, m, count_raw), pad_len, prefix="after", postfix=i)
+    plot_custom_color(
+        *to_img(dataset, g, c, m, count_raw), pad_len, prefix="after", postfix=i
+    )
 # ===================
 
 
@@ -397,7 +397,11 @@ def plot_count_dist(dataset, idx, zero_prob=None, count_temp=None) -> None:
     )
     ax_t.spines["top"].set_visible(False)
     ax_t.spines["left"].set_visible(False)
-    fig.savefig(f"figs/analysis_dataset/count_dist_{idx}.jpg", bbox_extra_artists=(lgd,), bbox_inches='tight')
+    fig.savefig(
+        f"figs/analysis_dataset/count_dist_{idx}.jpg",
+        bbox_extra_artists=(lgd,),
+        bbox_inches="tight",
+    )
 
     dataset.zero_prob = zero_prob_o
     dataset.count_temp = count_temp_o

@@ -225,8 +225,6 @@ fig.savefig(f"figs/analysis_model/pos_enc_cos.jpg")
 def get_rel_pos_bias(self, counts, mask_count=None):
     # counts, mask_count: [b, max_length].
     # return [b, 1+max_length, 1+max_length]
-    # context_position = torch.arange(seq_len, dtype=torch.long)[:, None]
-    # memory_position = torch.arange(seq_len, dtype=torch.long)[None, :]
 
     if not self.rel_pos:
         return None
@@ -241,21 +239,24 @@ def get_rel_pos_bias(self, counts, mask_count=None):
     rp_bucket = relative_position_bucket(
         relative_position,
         num_buckets=self.rel_pos_bins,
-        max_distance=self.max_seq_len,
+        max_distance=self.max_rel_pos,
     )
+
+    if mask_count is not None:
+        num_mask = mask_count.sum()
+        # ==== others to [MASK] ====
+        rp_bucket.transpose(1, 2)[mask_count] = torch.tensor(
+            self.rel_pos_bins + 1, device=rp_bucket.device
+        ).expand(num_mask, rp_bucket.shape[1])
+        # ==== [MASK] to others ====
+        rp_bucket[mask_count] = torch.tensor(
+            self.rel_pos_bins + 2, device=rp_bucket.device
+        ).expand(num_mask, rp_bucket.shape[2])
+
     # ==== others to [CLS] ====
     rp_bucket[:, :, 0] = self.rel_pos_bins
     # [CLS] to others, Note: self.rel_pos_bins // 2 is not used in relative_position_bucket
     rp_bucket[:, 0, :] = self.rel_pos_bins // 2
-    # ==== [MASK] to others ====
-    if mask_count is not None:
-        num_mask = mask_count.sum()
-        rp_bucket[mask_count] = torch.tensor(
-            self.rel_pos_bins + 1, device=rp_bucket.device
-        ).expand(num_mask, rp_bucket.shape[2])
-        rp_bucket.transpose(1, 2)[mask_count] = torch.tensor(
-            self.rel_pos_bins + 2, device=rp_bucket.device
-        ).expand(num_mask, rp_bucket.shape[1])
     return rp_bucket
 
 

@@ -227,16 +227,17 @@ class TransformerSentenceEncoder(nn.Module):
             max_distance=self.max_rel_pos,
         )
 
-        # ==== [MASK] to others ====
         if mask_count is not None:
             num_mask = mask_count.sum()
-            rp_bucket[mask_count] = torch.tensor(
-                self.rel_pos_bins + 1, device=rp_bucket.device
-            ).expand(num_mask, rp_bucket.shape[2])
+            # ==== others to [MASK] ====
             rp_bucket.transpose(1, 2)[mask_count] = torch.tensor(
-                self.rel_pos_bins + 2, device=rp_bucket.device
+                self.rel_pos_bins + 1, device=rp_bucket.device
             ).expand(num_mask, rp_bucket.shape[1])
-        
+            # ==== [MASK] to others ====
+            rp_bucket[mask_count] = torch.tensor(
+                self.rel_pos_bins + 2, device=rp_bucket.device
+            ).expand(num_mask, rp_bucket.shape[2])
+
         # ==== others to [CLS] ====
         rp_bucket[:, :, 0] = self.rel_pos_bins
         # [CLS] to others, Note: self.rel_pos_bins // 2 is not used in relative_position_bucket
