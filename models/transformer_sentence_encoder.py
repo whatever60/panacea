@@ -226,10 +226,7 @@ class TransformerSentenceEncoder(nn.Module):
             num_buckets=self.rel_pos_bins,
             max_distance=self.max_rel_pos,
         )
-        # ==== others to [CLS] ====
-        rp_bucket[:, :, 0] = self.rel_pos_bins
-        # [CLS] to others, Note: self.rel_pos_bins // 2 is not used in relative_position_bucket
-        rp_bucket[:, 0, :] = self.rel_pos_bins // 2
+
         # ==== [MASK] to others ====
         if mask_count is not None:
             num_mask = mask_count.sum()
@@ -239,13 +236,13 @@ class TransformerSentenceEncoder(nn.Module):
             rp_bucket.transpose(1, 2)[mask_count] = torch.tensor(
                 self.rel_pos_bins + 2, device=rp_bucket.device
             ).expand(num_mask, rp_bucket.shape[1])
+        
+        # ==== others to [CLS] ====
+        rp_bucket[:, :, 0] = self.rel_pos_bins
+        # [CLS] to others, Note: self.rel_pos_bins // 2 is not used in relative_position_bucket
+        rp_bucket[:, 0, :] = self.rel_pos_bins // 2
 
-        # Assume the input is ordered. If your input token is permuted, you may need to update this accordingly
-        # if rp_bucket.device != device:
-        # rp_bucket = rp_bucket.to(counts.device)
-        # rp_bucket = rp_bucket[:seq_len, :seq_len]
         values = F.embedding(rp_bucket, self.relative_attention_bias.weight)
-        # values = values.permute([2, 0, 1])
         values = values.permute([0, 3, 1, 2])
         return values.contiguous()  # [b, num_heads, max_length, max_length]
 
