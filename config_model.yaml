@@ -60,7 +60,8 @@ warmup_epochs: 10
 freeze_last_layer: 1  # Number of epochs during which we keep the output layer fixed. Typically doing so during the first epoch helps training. Try increasing this value if the loss does not decrease.
 epochs: 100
 grad_clip: 3.0
+grad_acc: 16
 
 # logging
-monitor: val/ari
+monitor: val/ibot_ari/0
 mode: max

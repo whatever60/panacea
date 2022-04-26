@@ -80,6 +80,9 @@ class SingleCellDataset(Dataset):
         self.vocab_size = vocab_size
         self.num_genes = vocab_size - num_special_tokens
 
+        self.dropout_p_g_l = [0] + [self.dropout_p_g] * (self.num_crops_g - 1)
+        self.dropout_p_l_l = [self.dropout_p_l] * self.num_crops_l
+
         # self.tokenizer = Tokenizer.from_file(f"{data_dir}/tokenizer.json")
         self.tokenizer = PreTrainedTokenizerFast(
             tokenizer_file=f"{data_dir}/tokenizer.json"
@@ -119,13 +122,13 @@ class SingleCellDataset(Dataset):
         sample["count_raw"] = count_raw
 
         # 加noise和sampling谁先谁后会有很大区别吗
-        dropout_p_g = [0] + [self.dropout_p_g] * (self.num_crops_g - 1)
-        dropout_p_l = [self.dropout_p_l] * self.num_crops_l
         # noise is only added to non-zero counts.
-        count_g = self.add_noise(count, self.noise_ratio_g, dropout_p_g)
-        count_l = self.add_noise(count, self.noise_ratio_l, dropout_p_l)
+        count_g = self.add_noise(count, "global")
+        count_l = self.add_noise(count, "local")
+        assert all(i.dtype == np.int64 for i in count_g), [i.dtype for i in count_g]
 
         gene_g, count_g = zip(*(self._sample_random(gene, count) for count in count_g))
+        assert all(i.dtype == np.int64 for i in count_g), [i.dtype for i in count_g]
         if self.num_crops_l:
             gene_l, count_l = zip(
                 *(
@@ -142,6 +145,8 @@ class SingleCellDataset(Dataset):
 
         gene_g, count_g, mask_g = self.pad(gene_g, count_g, mask_g, self.max_length_g)
         gene_l, count_l, mask_l = self.pad(gene_l, count_l, mask_l, self.max_length_l)
+        
+        assert all(i.dtype == np.int64 for i in count_g), [i.dtype for i in count_g]
 
         genes = gene_g + gene_l
         counts = count_g + count_l
@@ -160,6 +165,14 @@ class SingleCellDataset(Dataset):
             self.train_classes.index(sample["label"]) if not "val" in self.split else -1
         )
         sample["batch_idx"] = self.batches.index(sample["batch"])
+
+        assert sample["count_raw"].dtype == np.int64, sample["count_raw"].dtype
+    
+        assert all(i.dtype == np.int64 for i in sample["count"]), [i.dtype for i in sample["count"]]
+
+        assert all(i.dtype == np.int64 for i in sample["mask"]), [i.dtype for i in sample["mask"]]
+
+        assert all(i.dtype == np.int64 for i in sample["gene"]), [i.dtype for i in sample["gene"]]
 
         return sample
 
@@ -184,17 +197,24 @@ class SingleCellDataset(Dataset):
 
         # 0 for non-mask, 1 for gene mask, 2 for count mask
         mask = mask_gene + mask_count * mask_gene
-        return mask
+        return mask.astype(int)
 
-    @staticmethod
     def add_noise(
-        counts: np.ndarray, noise_ratio: float, dropout_p: List[float]
+        self, counts: np.ndarray, kind: Literal["global", "local"]
     ) -> List[np.ndarray]:
         """
         counts: 1d array
         noise_ratio: float
         dropout_p: 1d array
         """
+        if kind == "global":
+            noise_ratio = self.noise_ratio_g
+            dropout_p = self.dropout_p_g_l
+        elif kind == "local":
+            noise_ratio = self.noise_ratio_l
+            dropout_p = self.dropout_p_l_l
+        else:
+            raise ValueError(f"kind should be global or local, not {kind}")
         num_genes = len(counts)
         num_crops = len(dropout_p)
         if noise_ratio:
@@ -204,7 +224,8 @@ class SingleCellDataset(Dataset):
             res = counts[None]
         if dropout_p:
             dropout = np.stack([1 - np.random.rand(num_genes) * p for p in dropout_p])
-            res = (res * dropout).clip(min=0).round().astype(int)
+            res = res * dropout
+        res = res.clip(min=0).round().astype(int)
         return list(res)
 
     def _sample_random(
@@ -256,9 +277,16 @@ class SingleCellDataset(Dataset):
         mask_pad = -1
         for gene, count, mask in zip(genes, counts, masks):
             pad_len = max_length - len(gene)
-            genes_padded.append(np.concatenate([gene, [gene_pad] * pad_len]))
-            counts_padded.append(np.concatenate([count, [count_pad] * pad_len]))
-            masks_padded.append(np.concatenate([mask, [mask_pad] * pad_len]))
+            if pad_len:
+                # np.concatenate([np.arange(2), []]).dtype
+                # >>> dtype("float64")
+                genes_padded.append(np.concatenate([gene, [gene_pad] * pad_len]))
+                counts_padded.append(np.concatenate([count, [count_pad] * pad_len]))
+                masks_padded.append(np.concatenate([mask, [mask_pad] * pad_len]))
+            else:
+                genes_padded.append(gene)
+                counts_padded.append(count)
+                masks_padded.append(mask)
         return genes_padded, counts_padded, masks_padded
 
 
@@ -339,10 +367,13 @@ if __name__ == "__main__":
     rprint(len(dataset))
     sample = dataset[123]
     for k, v in sample.items():
-        rprint(k)
+        rprint(k, type(v), ":")
         if isinstance(v, np.ndarray):
-            rprint(v.shape)
+            rprint(v.shape, v.dtype)
         elif isinstance(v, list):
-            rprint([i.shape for i in v])
+            rprint([(i.shape, i.dtype) for i in v])
         elif not isinstance(v, Sequence):
             rprint(v)
+    
+    # for sample in datamodule.train_dataloader():
+

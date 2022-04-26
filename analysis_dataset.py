@@ -21,7 +21,7 @@ install()
 sns.set_style("ticks")
 sns.set_palette("Set1")
 plt.rcParams["figure.dpi"] = 300
-pl.seed_everything(2022)
+pl.seed_everything(777)
 
 # %%
 def to_img(dataset, g, c, m, count_raw):
@@ -43,14 +43,13 @@ def to_img(dataset, g, c, m, count_raw):
     return c_img, m_img
 
 
-def plot_custom_color(count, mask, pad_len):
+def plot_custom_color(count, mask, pad_len, prefix, postfix):
     """
     Modified from https://matplotlib.org/stable/tutorials/colors/colormaps.html
     """
     count_filter = count[count != 0.4]
     mask_filter = mask[count != 0.4]
-    figh = 5
-    fig, axs = plt.subplots(nrows=2, figsize=(30, figh))
+    figh = 0.45
 
     n = 4
     gradient = count.repeat(n)
@@ -70,7 +69,7 @@ def plot_custom_color(count, mask, pad_len):
     ) / 2
     masked[masked == 0.5] = np.nan
     masked = get_filtered_gradient(masked)
-    sep = np.ones_like(gradient) * np.nan
+    sep = np.zeros_like(gradient)
 
     if pad_len:
         start = 3 + n * len(count_filter)
@@ -78,17 +77,28 @@ def plot_custom_color(count, mask, pad_len):
         filtered_pad = filtered.copy()
         filtered_pad[start:end] = 0.4
         filtered_pad[start:end:n] = np.nan
-        gradient = np.stack([gradient, sep, filtered, sep, filtered_pad])
+        gradient = [gradient, filtered, filtered_pad]
     else:
-        gradient = np.stack([gradient, sep, filtered, sep, sep])
-    gradient_mask = np.stack([masked, sep, sep, sep, sep])
+        gradient = [gradient, filtered, sep]
+    gradient_mask = [masked]
 
-    axs[0].imshow(1 - gradient, aspect="auto", cmap="RdGy")
-    axs[1].imshow(gradient_mask, aspect="auto", cmap="cividis")
-    # Turn off *all* ticks & spines, not just the ones with colormaps.
-    for ax in axs:
+    for j, g in enumerate(gradient):
+        fig, ax = plt.subplots(figsize=(30, figh))
+        g = (1 - g)[None]
+        ax.imshow(g, aspect="auto", cmap="RdGy")
         ax.set_axis_off()
-    return fig
+        fig.savefig(f"figs/analysis_dataset/{prefix}_sampling_{postfix}_{j}.jpg")
+        plt.close(fig)
+    for j, g in enumerate(gradient_mask, len(gradient)):
+        fig, ax = plt.subplots(figsize=(30, figh))
+        g = g[None]
+        ax.imshow(g, aspect="auto", cmap="cividis")
+        ax.set_axis_off()
+        fig.savefig(f"figs/analysis_dataset/{prefix}_sampling_{postfix}_{j}.jpg")
+        plt.close(fig)
+    # Turn off *all* ticks & spines, not just the ones with colormaps.
+    # for ax in axs:
+    #     ax.set_axis_off()
 
 
 def _sample_random(self, gene, count, is_global) -> Tuple[np.ndarray, np.ndarray]:
@@ -139,6 +149,8 @@ split = "train"
 with open("config_data.yaml") as f:
     config = yaml.safe_load(f)
 
+config.update({"num_crops_g": 2, "num_crops_l": 3})
+
 # %%
 config_increase_sample = config.copy()
 config_increase_sample.update(
@@ -149,6 +161,10 @@ config_increase_sample.update(
         "min_length_l": 2048,
         "mean_length_l": 3072,
         "max_length_l": 4096,
+        # "noise_ratio_g": 0,
+        # "noise_ratio_l": 0,
+        # "dropout_p_g": 0,
+        # "dropout_p_l": 0,
     }
 )
 dataset = SingleCellDataset(data_dir=data_dir, split=split, **config_increase_sample)
@@ -179,18 +195,18 @@ print((get_interval(count_raw) != 0).sum())
 # %%
 # ===================
 # plot all genes
-fig, ax = plt.subplots(1, 1, figsize=(20, 7))
-sns.lineplot(x=np.arange(dataset.num_genes), y=count_raw, ax=ax)
-fig.savefig("figs/test_dataset/count_raw.jpg")
-plt.close(fig)
+# fig, ax = plt.subplots(1, 1, figsize=(20, 7))
+# sns.lineplot(x=np.arange(dataset.num_genes), y=count_raw, ax=ax)
+# fig.savefig("figs/analysis_dataset/count_raw.jpg")
+# plt.close(fig)
 # ===================
 
 
 # %%
 dropout_p_g = [0] + [self.dropout_p_g] * (self.num_crops_g - 1)
 dropout_p_l = [self.dropout_p_l] * self.num_crops_l
-count_g = self.add_noise(count, self.noise_ratio_g, dropout_p_g)
-count_l = self.add_noise(count, self.noise_ratio_l, dropout_p_l)
+count_g = self.add_noise(count, "global")
+count_l = self.add_noise(count, "local")
 
 
 # %%
@@ -199,42 +215,55 @@ count_g_raw = [dataset.to_raw(gene, c) for c in count_g]
 count_l_raw = [dataset.to_raw(gene, c) for c in count_l]
 # plot a interval with high non-zero proportion
 df = pd.DataFrame(dict(x=np.arange(100), y=get_interval(count_raw), hue="raw"))
-fig, ax = plt.subplots(1, 1, figsize=(20, 7))
-for i in range(dataset.num_crops_g):
+fig, ax = plt.subplots(1, 1, figsize=(10, 5))
+for i, c in enumerate(count_g_raw):
     df = pd.concat(
         [
             df,
             pd.DataFrame(
                 dict(
-                    x=np.arange(100), y=get_interval(count_g_raw[i]), hue=f"global-{i}"
+                    x=np.arange(100), y=get_interval(c), hue=f"global-{i}"
                 )
             ),
         ]
     ).reset_index(drop=True)
-for i in range(dataset.num_crops_l):
+for i, c in enumerate(count_l_raw):
     df = pd.concat(
         [
             df,
             pd.DataFrame(
-                dict(x=np.arange(100), y=get_interval(count_l_raw[i]), hue=f"local-{i}")
+                dict(x=np.arange(100), y=get_interval(c), hue=f"local-{i}")
             ),
         ]
     ).reset_index(drop=True)
 sns.lineplot(data=df, x="x", y="y", hue="hue", ax=ax, alpha=0.5)
-# remove legend
-ax.legend_.remove()
-fig.legend(fontsize="x-large", loc="upper right")
-fig.savefig("figs/test_dataset/count_interval_noisy.jpg")
+# https://stackoverflow.com/questions/4700614/how-to-put-the-legend-outside-the-plot-in-matplotlib
+# https://stackoverflow.com/questions/66346542/customizing-legend-in-seaborn-histplot-subplots
+legend = ax.get_legend()
+handles = legend.legendHandles
+legend.remove()
+lgd = ax.legend(
+    handles,
+    ["raw", "global-0", "global-1", "local-0", "local-1", "local-2"],
+    title="Views",
+    loc="upper right",
+    bbox_to_anchor=(1.25, 0.95),
+    ncol=1,
+    fancybox=True,
+    shadow=True,
+)
+# https://stackoverflow.com/questions/10101700/moving-matplotlib-legend-outside-of-the-axis-makes-it-cutoff-by-the-figure-box
+fig.savefig("figs/analysis_dataset/count_interval_noisy.jpg", bbox_extra_artists=(lgd,), bbox_inches='tight')
 plt.close(fig)
 
 # sample prob
-p = _sample_random(dataset, gene, count, is_global=True)
-fig, ax = plt.subplots(1, 1, figsize=(10, 5))
-pd.Series(p, index=count_raw).sort_index().drop_duplicates().plot(ax=ax)
-p = get_interval(p)
-fig, ax = plt.subplots(1, 1, figsize=(10, 5))
-sns.lineplot(x=np.arange(100), y=p / p.max(), ax=ax)
-fig.savefig("figs/test_dataset/sample_prob.jpg")
+# p = _sample_random(dataset, gene, count, is_global=True)
+# fig, ax = plt.subplots(1, 1, figsize=(10, 5))
+# pd.Series(p, index=count_raw).sort_index().drop_duplicates().plot(ax=ax)
+# p = get_interval(p)
+# fig, ax = plt.subplots(1, 1, figsize=(10, 5))
+# sns.lineplot(x=np.arange(100), y=p, ax=ax)
+# fig.savefig("figs/analysis_dataset/sample_prob.jpg")
 # ===================
 
 # %%
@@ -278,24 +307,22 @@ masks = mask_g + mask_l
 # ===================
 # plot sampling scheme
 # before sampling (all genes are sampled)
-fig = plot_custom_color(
+plot_custom_color(
     *to_img(
         dataset,
-        g=np.arange(self.num_genes),
+        g=np.arange(self.num_genes) + self.num_special_tokens,
         c=count_raw,
         m=np.zeros(self.num_genes),
         count_raw=count_raw,
     ),
     pad_len=0,
+    prefix="before",
+    postfix=0,
 )
-fig.savefig("figs/test_dataset/count_raw_before_sampling.jpg")
-plt.close(fig)
 # after sampling
 for i, (g, c, m) in enumerate(zip(genes, counts, masks)):
     pad_len = 25 if i < self.num_crops_g else 15
-    fig = plot_custom_color(*to_img(dataset, g, c, m, count_raw), pad_len)
-    fig.savefig(f"figs/test_dataset/count_raw_after_sampling_{i}.jpg")
-    plt.close(fig)
+    plot_custom_color(*to_img(dataset, g, c, m, count_raw), pad_len, prefix="after", postfix=i)
 # ===================
 
 
@@ -304,15 +331,15 @@ dataset = SingleCellDataset(data_dir=data_dir, split=split, **config)
 
 
 # %%
-def plot_count_dist(dataset, i, zero_prob=None, count_temp=None) -> None:
+def plot_count_dist(dataset, idx, zero_prob=None, count_temp=None) -> None:
     zero_prob_o = dataset.zero_prob
     count_temp_o = dataset.count_temp
     dataset.zero_prob = zero_prob if zero_prob is not None else dataset.zero_prob
     dataset.count_temp = count_temp if count_temp is not None else dataset.count_temp
 
-    sample = dataset[i]
-    sample_raw = dataset.dataset[dataset.split][i]
-    
+    sample = dataset[idx]
+    sample_raw = dataset.dataset[dataset.split][idx]
+
     # plot histogram of count distribution before and after sampling
     df = pd.DataFrame(dict(x=sample["count_raw"], view="raw"))
     for i in range(dataset.num_crops_g + dataset.num_crops_l):
@@ -352,7 +379,7 @@ def plot_count_dist(dataset, i, zero_prob=None, count_temp=None) -> None:
     legend = ax.get_legend()
     handles = legend.legendHandles
     legend.remove()
-    ax.legend(
+    ldg = ax.legend(
         handles,
         ["raw", "global-0", "global-1", "local-0", "local-1", "local-2"],
         title="Views",
@@ -370,15 +397,16 @@ def plot_count_dist(dataset, i, zero_prob=None, count_temp=None) -> None:
     )
     ax_t.spines["top"].set_visible(False)
     ax_t.spines["left"].set_visible(False)
-    fig.savefig(f"figs/test_dataset/count_raw_after_sampling_{i}.jpg")
+    fig.savefig(f"figs/analysis_dataset/count_dist_{idx}.jpg", bbox_extra_artists=(lgd,), bbox_inches='tight')
 
     dataset.zero_prob = zero_prob_o
     dataset.count_temp = count_temp_o
 
+
 # %%
 # ===================
 for i in [6560, 11087, 11198]:  # non-sparsity: [0.72, 0.51, 0.29]
-# for i in [11087]:
+    # for i in [11087]:
     # for zp in [0.05, 0.1, 0.15, 0.2]:
     plot_count_dist(dataset, i)
 
@@ -388,11 +416,11 @@ for i in [6560, 11087, 11198]:  # non-sparsity: [0.72, 0.51, 0.29]
 #         plot_count_dist(dataset, i, count_temp=cp)
 
 # %%
-non_sparsity = np.array(
-    [
-        len(dataset.dataset[dataset.split][i]["input_ids"]) / dataset.num_genes
-        for i in tqdm(range(len(dataset)))
-    ]
-)
+# non_sparsity = np.array(
+#     [
+#         len(dataset.dataset[dataset.split][i]["input_ids"]) / dataset.num_genes
+#         for i in tqdm(range(len(dataset)))
+#     ]
+# )
 
 # %%

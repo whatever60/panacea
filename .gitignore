@@ -9,6 +9,7 @@ lightning_logs/
 artifacts/
 figs/
 data/
+panacea/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

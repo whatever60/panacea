@@ -21,17 +21,17 @@ mask_idx: 4
 # global crops
 num_crops_g: 2
 min_length_g: 256
-mean_length_g: 384
-max_length_g: 512
-noise_ratio_g: 0.08
-dropout_p_g: 0.2
+mean_length_g: 512
+max_length_g: 576
+noise_ratio_g: 0.03
+dropout_p_g: 0.3
 # local crops
 num_crops_l: 2
-min_length_l: 64
-mean_length_l: 128
-max_length_l: 256
-noise_ratio_l: 0.08
-dropout_p_l: 0.2
+min_length_l: 128
+mean_length_l: 256
+max_length_l: 288
+noise_ratio_l: 0.03
+dropout_p_l: 0.3
 # sample genes
 length_dist: "sample"
 log_count: True

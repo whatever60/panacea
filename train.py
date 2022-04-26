@@ -551,6 +551,7 @@ def train_func(config_data: dict, config_model: dict):
         # log_every_n_steps=30,
         max_epochs=config["epochs"],
         gradient_clip_val=config["grad_clip"],
+        accumulate_grad_batches=config["grad_acc"],
     )
 
     if STRATEGY == "ddp":
@@ -581,6 +582,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--gpus", type=int, nargs="+", default=[0])
     # parser.add_argument("--num_batches", type=int, default=1, choices=[0, 1, 2, 4])
+    parser.add_argument("--test", type=bool, default=False)
     args = parser.parse_args()
 
     with open("config_data.yaml") as f:
@@ -594,5 +596,5 @@ if __name__ == "__main__":
     PROJECT = "panacea"
     GROUP = "test"
     STRATEGY = "ddp"
-    FAST_DEV_RUN = False
+    FAST_DEV_RUN = args.test
     train_func(config_data, config_model)
