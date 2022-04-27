@@ -241,16 +241,24 @@ class BERTLoss(nn.Module):
 
     def forward(self, targets_l, preds_l, masks_l):
         # targets: [num_masks_in_batch, out_dim]
+        # preds: [batch_size, max_length, out_dim]
+        # masks: [batch_size, max_length]
+
+        # -> [num_crops * num_masks_in_batch, out_dim]
         preds = torch.stack(preds_l)[torch.stack(masks_l)]
+        # both preds and targets are [num_crops * num_masks_in_batch, out_dim].
+        # CE loss is computed such that the second dimension is the one-hot vector.
+
+        # other losses deal with each crop separately, and get the mean, here I simply treat all crops as a whole.
         return self.loss(preds, torch.cat(targets_l))
 
-        total_loss, n_loss_terms = 0, 0
-        for targets, preds, masks in zip(targets_l, preds_l, masks_l):
-            total_loss += self.loss(preds[masks], targets)
-            n_loss_terms += 1
+        # total_loss, n_loss_terms = 0, 0
+        # for targets, preds, masks in zip(targets_l, preds_l, masks_l):
+        #     total_loss += self.loss(preds[masks], targets)
+        #     n_loss_terms += 1
 
-        loss = total_loss / n_loss_terms
-        return loss
+        # loss = total_loss / n_loss_terms
+        # return loss
 
 
 class MoCoLoss(nn.Module):

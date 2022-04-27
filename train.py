@@ -64,17 +64,15 @@ class Panacea(pl.LightningModule):
         masks_gene = [mask == 1 for mask in masks]
         masks_count = [mask == 2 for mask in masks]
 
-        genes_g = genes[:num_crops_g]
-        counts_g = counts[:num_crops_g]
-        masks_gene_g = masks_gene[:num_crops_g]
-        masks_count_g = masks_count[:num_crops_g]
-
         # global views
         _, emb_t_l, cls_t_l, patch_t_l, preds_gene_t_l, preds_count_t_l = self.teacher(
-            genes_g, counts_g, mask_gene=None, mask_count=None
+            genes[:num_crops_g], counts[:num_crops_g], mask_gene=None, mask_count=None
         )
         _, emb_s_l, cls_s_l, patch_s_l, preds_gene_s_l, preds_count_s_l = self.student(
-            genes_g, counts_g, mask_gene=masks_gene_g, mask_count=masks_count_g
+            genes[:num_crops_g],
+            counts[:num_crops_g],
+            mask_gene=masks_gene[:num_crops_g],
+            mask_count=masks_count[:num_crops_g],
         )
 
         # local views (no masking, and patch embedding discarded)
@@ -90,10 +88,10 @@ class Panacea(pl.LightningModule):
             ) = self.student(
                 genes[num_crops_g:],
                 counts[num_crops_g:],
-                # mask_gene=masks_gene[num_crops_g:],
-                # mask_count=masks_count[num_crops_g:],
-                mask_gene=None,
-                mask_count=None,
+                mask_gene=masks_gene[num_crops_g:],
+                mask_count=masks_count[num_crops_g:],
+                # mask_gene=None,
+                # mask_count=None,
             )
             # self.student.backbone.masked_im_modeling = self.hparams.mim
             emb_s_l += emb_s_local_l

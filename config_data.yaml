@@ -16,7 +16,7 @@ vocab_size: 14900
 num_special_tokens: 5
 num_genes: 14895
 cls_idx: 1
-padding_idx: 4
+padding_idx: 3
 mask_idx: 4
 # global crops
 num_crops_g: 2
