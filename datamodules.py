@@ -125,10 +125,8 @@ class SingleCellDataset(Dataset):
         # noise is only added to non-zero counts.
         count_g = self.add_noise(count, "global")
         count_l = self.add_noise(count, "local")
-        assert all(i.dtype == np.int64 for i in count_g), [i.dtype for i in count_g]
 
         gene_g, count_g = zip(*(self._sample_random(gene, count) for count in count_g))
-        assert all(i.dtype == np.int64 for i in count_g), [i.dtype for i in count_g]
         if self.num_crops_l:
             gene_l, count_l = zip(
                 *(
@@ -145,8 +143,6 @@ class SingleCellDataset(Dataset):
 
         gene_g, count_g, mask_g = self.pad(gene_g, count_g, mask_g, self.max_length_g)
         gene_l, count_l, mask_l = self.pad(gene_l, count_l, mask_l, self.max_length_l)
-
-        assert all(i.dtype == np.int64 for i in count_g), [i.dtype for i in count_g]
 
         genes = gene_g + gene_l
         counts = count_g + count_l
@@ -165,20 +161,6 @@ class SingleCellDataset(Dataset):
             self.train_classes.index(sample["label"]) if not "val" in self.split else -1
         )
         sample["batch_idx"] = self.batches.index(sample["batch"])
-
-        assert sample["count_raw"].dtype == np.int64, sample["count_raw"].dtype
-
-        assert all(i.dtype == np.int64 for i in sample["count"]), [
-            i.dtype for i in sample["count"]
-        ]
-
-        assert all(i.dtype == np.int64 for i in sample["mask"]), [
-            i.dtype for i in sample["mask"]
-        ]
-
-        assert all(i.dtype == np.int64 for i in sample["gene"]), [
-            i.dtype for i in sample["gene"]
-        ]
 
         return sample
 
@@ -380,5 +362,7 @@ if __name__ == "__main__":
             rprint([(i.shape, i.dtype) for i in v])
         elif not isinstance(v, Sequence):
             rprint(v)
+
+    rprint(dataset.tokenizer.pad_token_id)
 
     # for sample in datamodule.train_dataloader():

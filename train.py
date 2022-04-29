@@ -150,7 +150,10 @@ class Panacea(pl.LightningModule):
         ]
 
         loss_bert_t_gene = self.loss_bert(
-            targets_gene[:num_crops_g], preds_gene_t_l, masks_gene[:num_crops_g]
+            targets_gene[:num_crops_g],
+            preds_gene_t_l,
+            masks_gene[:num_crops_g],
+            self.hparams.gene_bce,
         )
         loss_bert_t_count = self.loss_bert(
             targets_count[:num_crops_g], preds_count_t_l, masks_count[:num_crops_g]
@@ -159,6 +162,7 @@ class Panacea(pl.LightningModule):
             targets_gene[:num_crops_g],
             preds_gene_s_l[:num_crops_g],
             masks_gene[:num_crops_g],
+            self.hparams.gene_bce,
         )
         loss_bert_s_count_g = self.loss_bert(
             targets_count[:num_crops_g],
@@ -170,6 +174,7 @@ class Panacea(pl.LightningModule):
                 targets_gene[num_crops_g:],
                 preds_gene_s_l[num_crops_g:],
                 masks_gene[num_crops_g:],
+                self.hparams.gene_bce,
             )
             loss_bert_s_count_l = self.loss_bert(
                 targets_count[num_crops_g:],
@@ -330,7 +335,8 @@ class Panacea(pl.LightningModule):
             activation_fn="gelu",
             rel_pos=True,
             rel_pos_bins=self.hparams.rel_pos_bins,
-            max_rel_pos=self.hparams.max_count,
+            max_rel_pos=self.hparams.max_rel_pos,
+            learned_pos=self.hparams.learned_pos,
         )
         student = TransformerSentenceEncoder(**kwargs)
         kwargs["drop_path"] = 0
@@ -402,7 +408,7 @@ class Panacea(pl.LightningModule):
         self.loss_bert = BERTLoss()
 
     def get_schedulers(self):
-        true_batch_size = self.hparams.batch_size * len(self.hparams.gpus)
+        true_batch_size = self.hparams.batch_size * max(1, len(self.hparams.gpus))
         steps_per_epoch = math.ceil(self.hparams.length_train / true_batch_size)
         self.schedule_lr = cosine_scheduler(
             start_warmup_value=0,
@@ -458,8 +464,16 @@ class Panacea(pl.LightningModule):
         """
         idx = torch.arange(mask.shape[0]).view(-1, 1).expand_as(mask)[mask]
         means = count_raw[idx, genes[mask] - self.hparams.num_special_tokens]
-        targets = nb_pmf(means, self.hparams.temp_gene, count_raw[idx], "gene")
-        targets /= targets.sum(dim=1, keepdim=True)
+
+        if self.hparams.temp_gene == 0:
+            label = (means.unsqueeze(1) == count_raw[idx]).float()
+            if self.hparams.gene_bce:
+                targets = label
+            else:
+                targets = label / label.sum(dim=1, keepdim=True)
+        else:
+            targets = nb_pmf(means, self.hparams.temp_gene, count_raw[idx], "gene")
+            targets /= targets.sum(dim=1, keepdim=True)
         return targets  # [num_masks_in_batch, num_genes]
 
     def get_target_counts(self, counts: torch.Tensor, mask: torch.Tensor):
@@ -467,13 +481,13 @@ class Panacea(pl.LightningModule):
         Label smoothing with Negative Binomial distribution
         """
         means = counts[mask]  # 1d
-        targets = nb_pmf(
-            means,
-            self.hparams.temp_count,
-            torch.arange(self.hparams.max_count, device=means.device),
-            "count",
-        )
-        targets /= targets.sum(dim=1, keepdim=True)
+        v = torch.arange(self.hparams.max_count, device=means.device)
+        if self.hparams.temp_count == 0:
+            label = (means.unsqueeze(1) == v.unsqueeze(0)).float()
+            targets = label.float() / label.sum(dim=1, keepdim=True)
+        else:
+            targets = nb_pmf(means, self.hparams.temp_count, v, "count")
+            targets /= targets.sum(dim=1, keepdim=True)
         return targets  # [num_masks_in_batch, max_count]
 
 
@@ -578,9 +592,9 @@ if __name__ == "__main__":
     pl.seed_everything(42)
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--gpus", type=int, nargs="+", default=[0])
+    parser.add_argument("--gpus", type=int, nargs="+", default=[])
     # parser.add_argument("--num_batches", type=int, default=1, choices=[0, 1, 2, 4])
-    parser.add_argument("--test", type=bool, default=False)
+    parser.add_argument("--test", action="store_true")
     args = parser.parse_args()
 
     with open("config_data.yaml") as f:

@@ -122,6 +122,7 @@ class TransformerSentenceEncoder(nn.Module):
         rel_pos: bool = False,
         rel_pos_bins: int = 32,
         max_rel_pos: int = 128,
+        learned_pos: bool = False,
         export: bool = False,
     ) -> None:
 
@@ -138,6 +139,13 @@ class TransformerSentenceEncoder(nn.Module):
             self.vocab_size, self.emb_dim, self.padding_idx
         )
         self.embed_scale = embed_scale
+        self.learned_pos = learned_pos
+        if self.learned_pos:
+            self.embed_pos = nn.Embedding(
+                self.max_seq_len + 3, self.emb_dim, padding_idx=0
+            )
+        else:
+            self.embed_pos = None
 
         self.attn_scale_factor = 2
         self.num_heads = num_heads
@@ -286,13 +294,19 @@ class TransformerSentenceEncoder(nn.Module):
         )
         return abs_pos_bias.transpose(1, 3)  # [b, h, l, l]
 
-    def get_abs_pos_bias_sinusoidal(self, counts):
+    def get_abs_pos_bias_sin(self, counts):
         # [b, max_length]. -3 for pad, -2 for cls, -1 for mask.
         counts = self.add_cls(counts, -2)
-        abs_pos_bias_sinusoidal = get_embedding(counts + 2, self.emb_dim)
+        abs_pos_bias_sinusoidal = get_embedding(counts + 3, self.emb_dim)
         # if padding_mask is not None:
         #     abs_pos_bias_sinusoidal[padding_mask] = 0  # padding
         return abs_pos_bias_sinusoidal  # [b, l, d]
+
+    def get_abs_pos_bias_learned(self, counts):
+        # [b, max_length]. -3 for pad, -2 for cls, -1 for mask.
+        counts = self.add_cls(counts.clip(max=self.max_seq_len - 1), -2)
+        abs_pos_bias_learned = self.embed_pos(counts + 3)
+        return abs_pos_bias_learned  # [b, l, d]
 
     def forward(
         self,
@@ -319,16 +333,18 @@ class TransformerSentenceEncoder(nn.Module):
         # positional encoding
         # [b, 1+max_length, length, length]
         mask_count = counts == -1
-        abs_pos_bias = self.get_abs_pos_bias(counts, mask_count)
-        abs_pos_bias_sin = self.get_abs_pos_bias_sinusoidal(counts)
-        rel_pos_bias = self.get_rel_pos_bias(counts, mask_count)
-        if rel_pos_bias is not None:
-            abs_pos_bias += rel_pos_bias
-        abs_pos_bias = abs_pos_bias.flatten(end_dim=1)
+        abs_pos_bias = (
+            self.get_abs_pos_bias(counts, mask_count)
+            + self.get_rel_pos_bias(counts, mask_count)
+        ).flatten(end_dim=1)
 
         tokens = self.add_cls(tokens, self.cls_idx)
-        # [b, length, emb_dim]
-        x = self.embed_tokens(tokens) + abs_pos_bias_sin
+        # [b, 1+length, emb_dim]
+        x = self.embed_tokens(tokens) + self.get_abs_pos_bias_sin(counts)
+
+        if self.embed_pos is not None:
+            abs_pos_bias_learned = self.get_abs_pos_bias_learned(counts)
+            x += abs_pos_bias_learned
 
         if self.embed_scale is not None:
             x *= self.embed_scale

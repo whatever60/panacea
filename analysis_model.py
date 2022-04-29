@@ -149,6 +149,7 @@ count_raw = count_raw.clip(0, self.hparams.max_count - 1)
 rprint(counts[0][idx])
 i = int(input("Please input i: "))
 
+# =========== target ===========
 masks_gene[0][idx, i] = True
 masks_count[0][idx, i] = True
 
