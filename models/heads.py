@@ -125,13 +125,13 @@ class iBOTHead(DINOHead):
         num_genes,
         max_count,
         in_dim,
-        out_dim,
-        patch_out_dim,
+        ibot_cls_dim,
+        ibot_patch_dim,
         norm=None,
         act="gelu",
         dropout_p=0.0,
         last_norm=None,
-        nlayers=3,
+        nlayers=2,
         hidden_dim=512,
         bottleneck_dim=256,
         norm_last_layer=True,
@@ -141,7 +141,7 @@ class iBOTHead(DINOHead):
 
         super(iBOTHead, self).__init__(
             in_dim=in_dim,
-            out_dim=out_dim,
+            out_dim=ibot_cls_dim,
             norm=norm,
             act=act,
             dropout_p=dropout_p,
@@ -156,17 +156,17 @@ class iBOTHead(DINOHead):
         if not shared_head:
             if bottleneck_dim > 0:
                 self.last_layer2 = nn.utils.weight_norm(
-                    nn.Linear(bottleneck_dim, patch_out_dim, bias=False)
+                    nn.Linear(bottleneck_dim, ibot_patch_dim, bias=False)
                 )
                 self.last_layer2.weight_g.data.fill_(1)
                 if norm_last_layer:
                     self.last_layer2.weight_g.requires_grad = False
             else:
-                self.mlp2 = nn.Linear(hidden_dim, patch_out_dim)
+                self.mlp2 = nn.Linear(hidden_dim, ibot_patch_dim)
                 self.last_layer2 = None
 
             self.last_norm2 = self._build_norm(
-                last_norm, patch_out_dim, affine=False, **kwargs
+                last_norm, ibot_patch_dim, affine=False, **kwargs
             )
         else:
             if bottleneck_dim > 0:

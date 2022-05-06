@@ -7,11 +7,12 @@ train_classes: [0, 1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15, 16]
 val_batches: [0, 1, 2, 4, 5, 6, 7]
 val_classes: [7]
 val_batches: [3]
+ignore_idx: 8
 length_train: 11237
 length_none: 2793
 length_val_type: 448
 length_val_batch: 1937
-# tokensizer
+# tokenizer
 vocab_size: 14900
 num_special_tokens: 5
 num_genes: 14895

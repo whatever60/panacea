@@ -15,6 +15,7 @@ from fairseq.modules import LayerNorm
 
 from .multihead_attention import MultiheadAttention
 from .transformer_sentence_encoder_layer import TransformerSentenceEncoderLayer
+from .rotary_positional_encoding import RotaryEmbedding
 
 
 def init_bert_params(module):
@@ -122,6 +123,7 @@ class TransformerSentenceEncoder(nn.Module):
         rel_pos: bool = False,
         rel_pos_bins: int = 32,
         max_rel_pos: int = 128,
+        sin_pos: bool = False,
         learned_pos: bool = False,
         export: bool = False,
     ) -> None:
@@ -146,6 +148,8 @@ class TransformerSentenceEncoder(nn.Module):
             )
         else:
             self.embed_pos = None
+        self.sin_pos = sin_pos
+        self.rotary_pos = RotaryEmbedding(dim=self.emb_dim)
 
         self.attn_scale_factor = 2
         self.num_heads = num_heads
@@ -340,7 +344,10 @@ class TransformerSentenceEncoder(nn.Module):
 
         tokens = self.add_cls(tokens, self.cls_idx)
         # [b, 1+length, emb_dim]
-        x = self.embed_tokens(tokens) + self.get_abs_pos_bias_sin(counts)
+        x = self.embed_tokens(tokens)
+
+        if self.sin_pos:
+            x += self.get_abs_pos_bias_sin(counts)
 
         if self.embed_pos is not None:
             abs_pos_bias_learned = self.get_abs_pos_bias_learned(counts)
@@ -361,13 +368,19 @@ class TransformerSentenceEncoder(nn.Module):
 
         # B x T x C -> T x B x C
         x = x.transpose(0, 1)
+        count = self.add_cls(counts, -2) + 3
 
         inner_states = []
         if return_all_tokens:
             inner_states.append(x)
         for layer in self.layers:
             x = layer(
-                x, self_attn_padding_mask=padding_mask, self_attn_bias=abs_pos_bias
+                x,
+                self_attn_padding_mask=padding_mask,
+                self_attn_bias=abs_pos_bias,
+                rotary_pos_func=lambda q_or_k: self.rotary_pos.rotate_queries_or_keys(
+                    q_or_k.transpose(0, 1), count
+                ),
             )
             if return_all_tokens:
                 inner_states.append(x)

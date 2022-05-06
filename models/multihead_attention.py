@@ -7,8 +7,10 @@
 # LICENSE file in the root directory of this source tree.
 
 import warnings
+from typing import Optional, Tuple
 
 import torch
+from torch import Tensor
 from torch import nn
 from torch.nn import Parameter
 import torch.nn.functional as F
@@ -36,6 +38,7 @@ def multi_head_attention_forward(
     need_weights=True,  # type: bool
     attn_mask=None,  # type: Optional[Tensor]
     attn_bias=None,  # type: Optional[Tensor]
+    rotary_pos_func=None,
 ):
     # type: (...) -> Tuple[Tensor, Optional[Tensor]]
     tgt_len, bsz, embed_dim = query.size()
@@ -47,6 +50,8 @@ def multi_head_attention_forward(
     scaling = float(head_dim * scale_factor) ** -0.5
 
     q, k, v = F.linear(query, in_proj_weight, in_proj_bias).chunk(3, dim=-1)
+    q = rotary_pos_func(q)
+    k = rotary_pos_func(k)
 
     q = q * scaling
 
@@ -237,6 +242,7 @@ class MultiheadAttention(nn.Module):
         need_weights=True,
         attn_mask=None,
         attn_bias=None,
+        rotary_pos_func=None,
     ):
         return multi_head_attention_forward(
             query,
@@ -258,4 +264,5 @@ class MultiheadAttention(nn.Module):
             need_weights=need_weights,
             attn_mask=attn_mask,
             attn_bias=attn_bias,
+            rotary_pos_func=rotary_pos_func,
         )

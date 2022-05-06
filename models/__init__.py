@@ -10,3 +10,4 @@ from .transformer_sentence_encoder import (
     relative_position_bucket,
 )
 from .transformer_sentence_encoder import TransformerSentenceEncoderLayer
+from .rotary_positional_encoding import RotaryEmbedding

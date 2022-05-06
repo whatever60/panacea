@@ -15,6 +15,7 @@ class SingleCellDataset(Dataset):
         classes: list,
         batches: list,
         train_classes: list,
+        ignore_idx: int,
         # ==== sample genes ====
         num_crops_g: int,
         min_length_g: int,
@@ -53,6 +54,7 @@ class SingleCellDataset(Dataset):
         self.classes = classes
         self.batches = batches
         self.train_classes = train_classes
+        self.ignore_idx = ignore_idx
 
         self.num_crops_g = num_crops_g
         self.min_length_g = min_length_g
@@ -158,7 +160,9 @@ class SingleCellDataset(Dataset):
             sample["celltype"] = "nan"
         sample["label"] = self.classes.index(sample["celltype"])
         sample["target"] = (
-            self.train_classes.index(sample["label"]) if not "val" in self.split else -1
+            self.train_classes.index(sample["label"])
+            if not "val" in self.split
+            else self.ignore_idx
         )
         sample["batch_idx"] = self.batches.index(sample["batch"])
 

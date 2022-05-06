@@ -59,7 +59,8 @@ class Panacea(pl.LightningModule):
         genes = batch["gene"]  # list
         counts = batch["count"]  # list
         masks = batch["mask"]  # list
-        target = batch["target"]  # list
+        target = batch["target"]
+        label = batch["label"]
         count_raw = batch["count_raw"]  # tensor
         masks_gene = [mask == 1 for mask in masks]
         masks_count = [mask == 2 for mask in masks]
@@ -131,13 +132,20 @@ class Panacea(pl.LightningModule):
         argmax_t = logit_t.argmax(dim=1)
         ibot_acc_m(logit_s, argmax_t)
         log.update({f"{stage}/ibot_acc": ibot_acc_m})
-        ibot_metrics(argmax_t, target)
+        ibot_metrics(argmax_t, label)
 
-        loss_moco, moco_acc = self.loss_moco(
+        loss_moco, moco_acc, loss_sup = self.loss_moco(
             torch.stack([i[:, 0] for i in emb_s_l], dim=1),
             torch.stack([i[:, 0] for i in emb_t_l], dim=1),
+            label=label,
         )
-        log.update({f"{stage}/moco_acc": moco_acc, f"{stage}/loss_moco": loss_moco})
+        log.update(
+            {
+                f"{stage}/moco_acc": moco_acc,
+                f"{stage}/loss_moco": loss_moco,
+                f"{stage}/loss_sup": loss_sup,
+            }
+        )
 
         # bert loss
         counts = [count.clip(0, self.hparams.max_count - 1) for count in counts]
@@ -201,6 +209,7 @@ class Panacea(pl.LightningModule):
             + loss_ibot_patch_gene * self.hparams.lambda_ibot_gene
             + loss_ibot_patch_count * self.hparams.lambda_ibot_count
             + loss_moco * self.hparams.lambda_ibot_count
+            + loss_sup * self.hparams.lambda_sup
             + loss_bert_s_gene_g * self.hparams.lambda_bert_gene_g
             + loss_bert_s_count_g * self.hparams.lambda_bert_count_g
             + loss_bert_s_gene_l * self.hparams.lambda_bert_gene_l
@@ -336,7 +345,6 @@ class Panacea(pl.LightningModule):
             rel_pos=True,
             rel_pos_bins=self.hparams.rel_pos_bins,
             max_rel_pos=self.hparams.max_rel_pos,
-            learned_pos=self.hparams.learned_pos,
         )
         student = TransformerSentenceEncoder(**kwargs)
         kwargs["drop_path"] = 0
@@ -347,8 +355,8 @@ class Panacea(pl.LightningModule):
                 self.hparams.vocab_size - self.hparams.num_special_tokens,
                 self.hparams.max_count,
                 self.hparams.emb_dim,
-                self.hparams.out_dim,
-                patch_out_dim=self.hparams.patch_out_dim,
+                self.hparams.ibot_cls_dim,
+                ibot_patch_dim=self.hparams.ibot_patch_dim,
                 norm=self.hparams.norm_in_head,
                 act=self.hparams.act_in_head,
                 dropout_p=self.hparams.dropout_in_head,
@@ -364,8 +372,8 @@ class Panacea(pl.LightningModule):
                 self.hparams.vocab_size - self.hparams.num_special_tokens,
                 self.hparams.max_count,
                 self.hparams.emb_dim,
-                self.hparams.out_dim,
-                patch_out_dim=self.hparams.patch_out_dim,
+                self.hparams.ibot_cls_dim,
+                ibot_patch_dim=self.hparams.ibot_patch_dim,
                 norm=self.hparams.norm_in_head,
                 act=self.hparams.act_in_head,
                 dropout_p=self.hparams.dropout_in_head,
@@ -386,8 +394,8 @@ class Panacea(pl.LightningModule):
         distributed = len(self.hparams.gpus) > 1
         same_dim = self.hparams.shared_head or self.hparams.shared_head_t
         self.loss_ibot = iBOTLoss(
-            self.hparams.out_dim,
-            self.hparams.out_dim if same_dim else self.hparams.patch_out_dim,
+            self.hparams.ibot_cls_dim,
+            self.hparams.ibot_cls_dim if same_dim else self.hparams.ibot_patch_dim,
             self.hparams.warmup_teacher_temp,
             self.hparams.teacher_temp,
             self.hparams.warmup_teacher_patch_temp,
@@ -403,6 +411,8 @@ class Panacea(pl.LightningModule):
             else self.hparams.head_hid_dim,
             self.hparams.num_negs,
             self.hparams.moco_temp,
+            self.hparams.sup_temp,
+            self.hparams.ignore_idx,
             distributed=distributed,
         )
         self.loss_bert = BERTLoss()
@@ -473,7 +483,10 @@ class Panacea(pl.LightningModule):
                 targets = label / label.sum(dim=1, keepdim=True)
         else:
             targets = nb_pmf(means, self.hparams.temp_gene, count_raw[idx], "gene")
-            targets /= targets.sum(dim=1, keepdim=True)
+            if self.hparams.gene_bce:
+                targets /= targets.max(dim=1, keepdim=True)[0]
+            else:
+                targets /= targets.sum(dim=1, keepdim=True)
         return targets  # [num_masks_in_batch, num_genes]
 
     def get_target_counts(self, counts: torch.Tensor, mask: torch.Tensor):

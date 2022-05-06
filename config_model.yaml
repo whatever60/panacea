@@ -1,6 +1,6 @@
 # backbone
 emb_dim: 192
-depth: 10
+depth: 8
 num_heads: 3
 mlp_ratio: 4
 qkv_bias: True
@@ -10,12 +10,11 @@ embedding_normalize: True
 rel_pos_bins: 784
 max_rel_pos: 5000
 max_count: 10000
-learned_pos: False
 # head
-head_hid_dim: 512
-head_bottleneck_dim: 64
-out_dim: 512
-patch_out_dim: 512
+head_hid_dim: 256
+head_bottleneck_dim: 128
+ibot_cls_dim: 512
+ibot_patch_dim: 512
 norm_in_head: Null
 act_in_head: gelu
 dropout_in_head: 0
@@ -35,9 +34,11 @@ warmup_teacher_temp_epochs: 30
 # moco
 num_negs: 8192
 moco_temp: 0.07
+# sup
+sup_temp: 0.1
 # bert
 gene_bce: True
-temp_gene: 0
+temp_gene: 0.001
 temp_count: 0.03
 # weights
 lambda_ibot_ss: 0.1
@@ -45,6 +46,7 @@ lambda_ibot_st: 0.1
 lambda_ibot_gene: 0.1
 lambda_ibot_count: 0.1
 lambda_moco: 1
+lambda_sup: 1
 lambda_bert_gene_g: 1
 lambda_bert_count_g: 1
 lambda_bert_gene_l: 0.1

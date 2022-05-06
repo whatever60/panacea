@@ -211,16 +211,16 @@ fig.savefig(f"figs/analysis_model/target_count_all.jpg")
 trm_model = model.student.backbone
 
 # sin
-count = torch.arange(100).unsqueeze(0)
-pos_enc = trm_model.get_abs_pos_bias_sinusoidal(count)
-fig, ax = plt.subplots(1, 1, figsize=(10, 5))
-for i in range(self.hparams.emb_dim // 2):
-    pd.Series(pos_enc[0, :, i]).plot(ax=ax)
-fig.savefig(f"figs/analysis_model/pos_enc_sin.jpg")
-fig, ax = plt.subplots(1, 1, figsize=(10, 5))
-for i in range(self.hparams.emb_dim // 2, self.hparams.emb_dim):
-    pd.Series(pos_enc[0, :, i]).plot(ax=ax)
-fig.savefig(f"figs/analysis_model/pos_enc_cos.jpg")
+# count = torch.arange(100).unsqueeze(0)
+# pos_enc = trm_model.get_abs_pos_bias_sinusoidal(count)
+# fig, ax = plt.subplots(1, 1, figsize=(10, 5))
+# for i in range(self.hparams.emb_dim // 2):
+#     pd.Series(pos_enc[0, :, i]).plot(ax=ax)
+# fig.savefig(f"figs/analysis_model/pos_enc_sin.jpg")
+# fig, ax = plt.subplots(1, 1, figsize=(10, 5))
+# for i in range(self.hparams.emb_dim // 2, self.hparams.emb_dim):
+#     pd.Series(pos_enc[0, :, i]).plot(ax=ax)
+# fig.savefig(f"figs/analysis_model/pos_enc_cos.jpg")
 
 # rel
 def get_rel_pos_bias(self, counts, mask_count=None):

@@ -81,6 +81,7 @@ class TransformerSentenceEncoderLayer(nn.Module):
         self_attn_mask: torch.Tensor = None,
         self_attn_padding_mask: torch.Tensor = None,
         self_attn_bias: torch.Tensor = None,
+        rotary_pos_func=None,
     ):
         """
         LayerNorm is applied either before or after the self-attention/ffn
@@ -97,6 +98,7 @@ class TransformerSentenceEncoderLayer(nn.Module):
             need_weights=False,
             attn_mask=self_attn_mask,
             attn_bias=self_attn_bias,
+            rotary_pos_func=rotary_pos_func,
         )
         x = F.dropout(x, p=self.dropout, training=self.training)
 

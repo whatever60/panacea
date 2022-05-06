@@ -265,16 +265,27 @@ class BERTLoss(nn.Module):
 
 class MoCoLoss(nn.Module):
     def __init__(
-        self, emb_dim: int, num_negatives: int, temp: float, distributed: bool
+        self,
+        emb_dim: int,
+        num_negatives: int,
+        temp: float,
+        temp_sup: float,
+        ignore_idx: int,  # null label
+        distributed: bool,
     ) -> None:
         super().__init__()
         self.register_buffer("queue", torch.randn(emb_dim, num_negatives))
         self.queue = nn.functional.normalize(self.queue, dim=0)
+        self.register_buffer("queue_label", torch.zeros(num_negatives))
         self.register_buffer("queue_ptr", torch.zeros(1, dtype=torch.long))
+        self.register_buffer("queue_ptr_label", torch.zeros(1, dtype=torch.long))
+        # queue_ptr and queue_ptr_label are always the same, they are defined separately just for convenience.
 
         self.register_buffer("queue_val", torch.randn(emb_dim, num_negatives))
         self.queue_val = nn.functional.normalize(self.queue_val, dim=0)
+        self.register_buffer("queue_val_label", torch.zeros(num_negatives))
         self.register_buffer("queue_ptr_val", torch.zeros(1, dtype=torch.long))
+        self.register_buffer("queue_ptr_label_val", torch.zeros(1, dtype=torch.long))
 
         # self.loss = nn.BCELoss()
         self.loss = nn.CrossEntropyLoss()
@@ -282,17 +293,33 @@ class MoCoLoss(nn.Module):
         self.emb_dim = emb_dim
         self.num_negatives = num_negatives
         self.temp = temp
+        self.temp_sup = temp_sup
+        self.ignore_idx = ignore_idx
         self.distributed = distributed
         self._to_enter_queue = None
+        self._to_enter_queue_label = None
 
     @torch.no_grad()
-    def _dequeue_and_enqueue(self) -> None:
-        keys = self._to_enter_queue
+    def _dequeue_and_enqueue(self, label: bool) -> None:
+        if not label:
+            keys = self._to_enter_queue
+            if self.training:
+                queue = self.queue
+                queue_ptr = self.queue_ptr
+            else:
+                queue = self.queue_val
+                queue_ptr = self.queue_ptr_val
+        else:
+            keys = self._to_enter_queue_label
+            if self.training:
+                queue = self.queue_label
+                queue_ptr = self.queue_ptr_label
+            else:
+                queue = self.queue_val_label
+                queue_ptr = self.queue_ptr_label_val
+
         if keys is None:
             return
-        queue = self.queue if self.training else self.queue_val
-        queue_ptr = self.queue_ptr if self.training else self.queue_ptr_val
-
         if self.distributed is True:
             keys = concat_all_gather(keys)
         batch_size = keys.shape[0]
@@ -301,19 +328,20 @@ class MoCoLoss(nn.Module):
         #     return
         ptr_end = ptr + batch_size
         if ptr_end <= self.num_negatives:
-            queue[:, ptr : ptr + batch_size] = keys.t()
+            queue[..., ptr : ptr + batch_size] = keys.t()
             ptr = (ptr + batch_size) % self.num_negatives
         else:
             delta = ptr_end - self.num_negatives
-            queue[:, ptr:] = keys.t()[:, :-delta]
-            queue[:, :delta] = keys.t()[:, -delta:]
+            queue[..., ptr:] = keys.t()[..., :-delta]
+            queue[..., :delta] = keys.t()[..., -delta:]
             ptr = delta
 
         queue_ptr[0] = ptr
 
-    def forward(self, cls_s: torch.Tensor, cls_t: torch.Tensor):
+    def forward(self, cls_s: torch.Tensor, cls_t: torch.Tensor, label: torch.Tensor):
         # cls_s: [batch_size, num_crops_s, out_dim]
         # cls_t: [batch_size, num_crops_t, out_dim]
+        # labels: [batch_size]
         batch_size, num_crops_s, out_dim = cls_s.shape
         _, num_crops_t, _ = cls_t.shape
         # cls_s = nn.functional.normalize(cls_s, dim=2)
@@ -323,10 +351,13 @@ class MoCoLoss(nn.Module):
         cls_t = cls_t[np.arange(batch_size), crop_idx]
         l_pos = torch.einsum("bsd, bd -> bs", cls_s, cls_t).unsqueeze(-1)
         queue = self.queue if self.training else self.queue_val
-        self._dequeue_and_enqueue()
+        queue_label = self.queue_label if self.training else self.queue_val_label
+        self._dequeue_and_enqueue(label=False)
+        self._dequeue_and_enqueue(label=True)
         self._to_enter_queue = cls_t
+        self._to_enter_queue_label = label
         l_neg = torch.einsum("bsd, dq -> bsq", cls_s, queue)
-        # [batch_size, num_crops_s, num_crops_t + queue_size]
+        # [batch_size, num_crops_s, 1 + queue_size]
         logits = torch.cat([l_pos, l_neg], dim=2) / self.temp
         # logits = logits.softmax(dim=2)
         logits = logits.view(batch_size * num_crops_s, -1)
@@ -344,7 +375,22 @@ class MoCoLoss(nn.Module):
         # p = precision(logits, labels.int(), threshold=0.5 / num_crops_t)
         # p = precision(logits, labels.int())
         a = accuracy(logits, labels)
-        return loss, a
+
+        # knn loss
+        ignored_samples = label.eq(self.ignore_idx)
+        if ignored_samples.all():
+            l_neg = l_neg[~ignored_samples]
+            label = label[~ignored_samples].view(-1, 1, 1)
+            ignored_samples = queue_label.eq(self.ignore_idx)
+            queue_label = queue_label[~ignored_samples].view(1, 1, -1).expand(-1, 1, -1)
+            p = (l_neg / self.temp_sup).exp()
+            # get those in the queue of the same label
+            pos_idx = (label == queue_label).float()
+            pos_idx /= pos_idx.sum(dim=2, keepdim=True)
+            p = -(p * pos_idx).sum(dim=2).log().mean()
+        else:
+            p = 0.
+        return loss, a, p
 
 
 # utils
