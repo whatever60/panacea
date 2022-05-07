@@ -379,19 +379,38 @@ class MoCoLoss(nn.Module):
         # knn loss
         ignored_samples = label.eq(self.ignore_idx)
         if ignored_samples.all():
+            loss_sup = 0.0
+        else:
             l_neg = l_neg[~ignored_samples]
             label = label[~ignored_samples].view(-1, 1, 1)
-            ignored_samples = queue_label.eq(self.ignore_idx)
-            queue_label = queue_label[~ignored_samples].view(1, 1, -1).expand(-1, 1, -1)
-            p = (l_neg / self.temp_sup).exp()
+            queue_label = queue_label.view(1, 1, -1)
+            p = (-l_neg / self.temp_sup).exp()
             # get those in the queue of the same label
-            pos_idx = (label == queue_label).float()
-            pos_idx /= pos_idx.sum(dim=2, keepdim=True)
-            p = -(p * pos_idx).sum(dim=2).log().mean()
-        else:
-            p = 0.
-        return loss, a, p
-
+            pos_idx = label == queue_label
+            p = p.masked_fill(~pos_idx, 0.0) / pos_idx.sum(dim=2, keepdim=True).clip(1.0)
+            loss_sup = p.sum(dim=2).log1p().mean()
+        return loss, a, loss_sup
+        # # knn loss
+        # ignored_samples = label.eq(self.ignore_idx)
+        # if ignored_samples.all():
+        #     loss_sup = 0.0
+        # else:
+        #     l_neg = l_neg[~ignored_samples]
+        #     label = label[~ignored_samples].view(-1, 1, 1)
+        #     queue_label = queue_label.view(1, 1, -1)
+        #     p = (-l_neg / self.temp_sup).exp()
+        #     # get those in the queue of the same label
+        #     pos_idx = label == queue_label
+        #     loss_sup = 0
+        #     for p, idx in zip(p, pos_idx):
+        #         p_same_class = p[idx.expand_as(p)]
+        #         if p_same_class.numel():
+        #             loss_sup += p[idx.expand_as(p)].mean().log1p()
+        #     loss_sup = loss_sup / batch_size
+        #     print(loss_sup)
+        #     # pos_idx /= pos_idx.sum(dim=2)
+        #     # p = -(p * pos_idx).sum(dim=2).log().mean()
+        # return loss, a, loss_sup
 
 # utils
 @torch.no_grad()
