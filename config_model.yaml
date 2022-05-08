@@ -19,7 +19,7 @@ norm_in_head: Null
 act_in_head: gelu
 dropout_in_head: 0
 norm_last_layer: False  # Whether or not to weight normalize the last layer of the head. Not normalizing leads to better performance but can make the training unstable. In our experiments, we typically set this paramater to False with vit_small and True with vit_base.
-shared_head: False  # Whether to share the same head for [CLS] token output and patch tokens output. When set to false, patch_out_dim is ignored and enforced to be same with out_dim.
+shared_head: True  # Whether to share the same head for [CLS] token output and patch tokens output. When set to false, patch_out_dim is ignored and enforced to be same with out_dim.
 shared_head_t: True  # See above. Only works for teacher model.
 # stochastic depth
 drop_path: 0.1
@@ -41,7 +41,7 @@ gene_bce: True
 temp_gene: 0.001
 temp_count: 0.03
 # weights
-lambda_ibot_ss: 0.1
+lambda_ibot_ss: 0.0
 lambda_ibot_st: 0.1
 lambda_ibot_gene: 0.1
 lambda_ibot_count: 0.1
