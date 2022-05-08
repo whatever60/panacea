@@ -270,7 +270,6 @@ class MoCoLoss(nn.Module):
         num_negatives: int,
         temp: float,
         temp_sup: float,
-        ignore_idx: int,  # null label
         distributed: bool,
     ) -> None:
         super().__init__()
@@ -294,7 +293,6 @@ class MoCoLoss(nn.Module):
         self.num_negatives = num_negatives
         self.temp = temp
         self.temp_sup = temp_sup
-        self.ignore_idx = ignore_idx
         self.distributed = distributed
         self._to_enter_queue = None
         self._to_enter_queue_label = None
@@ -381,36 +379,15 @@ class MoCoLoss(nn.Module):
         if ignored_samples.all():
             loss_sup = 0.0
         else:
-            l_neg = l_neg[~ignored_samples]
-            label = label[~ignored_samples].view(-1, 1, 1)
+            label = label.view(-1, 1, 1)
             queue_label = queue_label.view(1, 1, -1)
-            p = (-l_neg / self.temp_sup).exp()
+            p = (l_neg / self.temp_sup).exp()
             # get those in the queue of the same label
             pos_idx = label == queue_label
             p = p.masked_fill(~pos_idx, 0.0) / pos_idx.sum(dim=2, keepdim=True).clip(1.0)
-            loss_sup = p.sum(dim=2).log1p().mean()
+            loss_sup = -p.sum(dim=2).log1p().mean()
         return loss, a, loss_sup
-        # # knn loss
-        # ignored_samples = label.eq(self.ignore_idx)
-        # if ignored_samples.all():
-        #     loss_sup = 0.0
-        # else:
-        #     l_neg = l_neg[~ignored_samples]
-        #     label = label[~ignored_samples].view(-1, 1, 1)
-        #     queue_label = queue_label.view(1, 1, -1)
-        #     p = (-l_neg / self.temp_sup).exp()
-        #     # get those in the queue of the same label
-        #     pos_idx = label == queue_label
-        #     loss_sup = 0
-        #     for p, idx in zip(p, pos_idx):
-        #         p_same_class = p[idx.expand_as(p)]
-        #         if p_same_class.numel():
-        #             loss_sup += p[idx.expand_as(p)].mean().log1p()
-        #     loss_sup = loss_sup / batch_size
-        #     print(loss_sup)
-        #     # pos_idx /= pos_idx.sum(dim=2)
-        #     # p = -(p * pos_idx).sum(dim=2).log().mean()
-        # return loss, a, loss_sup
+
 
 # utils
 @torch.no_grad()

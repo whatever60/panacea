@@ -15,7 +15,6 @@ class SingleCellDataset(Dataset):
         classes: list,
         batches: list,
         train_classes: list,
-        ignore_idx: int,
         # ==== sample genes ====
         num_crops_g: int,
         min_length_g: int,
@@ -54,7 +53,6 @@ class SingleCellDataset(Dataset):
         self.classes = classes
         self.batches = batches
         self.train_classes = train_classes
-        self.ignore_idx = ignore_idx
 
         self.num_crops_g = num_crops_g
         self.min_length_g = min_length_g
@@ -162,7 +160,7 @@ class SingleCellDataset(Dataset):
         sample["target"] = (
             self.train_classes.index(sample["label"])
             if not "val" in self.split
-            else self.ignore_idx
+            else -1
         )
         sample["batch_idx"] = self.batches.index(sample["batch"])
 
@@ -286,6 +284,7 @@ class PanaceaDataModule(pl.LightningDataModule):
     def __init__(
         self,
         data_dir: str,
+        test: bool = False,
         **data_config_dict,
     ):
         super().__init__()
@@ -294,11 +293,14 @@ class PanaceaDataModule(pl.LightningDataModule):
     def setup(self, stage=None):
         if stage == "fit" or stage is None:
             kwargs = self.hparams.copy()
-            self.dataset_train = SingleCellDataset(split="train", **self.hparams)
 
             kwargs["num_crops_g"] = 1
             kwargs["noise_ratio_g"] = kwargs["dropout_p_g"] = 0
             kwargs["num_crops_l"] = 0
+            if not self.hparams.test:
+                self.dataset_train = SingleCellDataset(split="train", **self.hparams)
+            else:
+                self.dataset_train = SingleCellDataset(split="train", **kwargs)
             self.dataset_val_none = SingleCellDataset(split="val_none", **kwargs)
             self.dataset_val_type = SingleCellDataset(split="val_type", **kwargs)
             self.dataset_val_batch = SingleCellDataset(split="val_batch", **kwargs)
@@ -307,9 +309,9 @@ class PanaceaDataModule(pl.LightningDataModule):
         return DataLoader(
             self.dataset_train,
             batch_size=self.hparams.batch_size,
-            shuffle=True,
+            shuffle=False if self.hparams.test else True,
             num_workers=16,
-            pin_memory=True,
+            pin_memory=False if self.hparams.test else True,
         )
 
     def val_dataloader(self):
@@ -318,7 +320,7 @@ class PanaceaDataModule(pl.LightningDataModule):
             batch_size=self.hparams.batch_size,
             shuffle=False,
             num_workers=16,
-            pin_memory=True,
+            pin_memory=False if self.hparams.test else True,
         )
 
         loader_val_type = DataLoader(
@@ -326,7 +328,7 @@ class PanaceaDataModule(pl.LightningDataModule):
             batch_size=self.hparams.batch_size,
             shuffle=False,
             num_workers=16,
-            pin_memory=True,
+            pin_memory=False if self.hparams.test else True,
         )
 
         loader_val_batch = DataLoader(
@@ -334,7 +336,7 @@ class PanaceaDataModule(pl.LightningDataModule):
             batch_size=self.hparams.batch_size,
             shuffle=False,
             num_workers=16,
-            pin_memory=True,
+            pin_memory=False if self.hparams.test else True,
         )
         return loader_val_none, loader_val_type, loader_val_batch
 

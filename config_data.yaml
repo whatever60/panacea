@@ -4,10 +4,9 @@ num_batches: 8
 classes: ["alpha", "beta", "ductal", "acinar", "delta", "gamma", "activated_stellate", "alpha_er", "nan", "endothelial", "quiescent_stellate", "beta_er", "macrophage", "mast", "epithelial", "schwann", "epsilon"]
 batches: ["pancreas_indrop3", "pancreas_celseq2", "pancreas_smartseq2", "pancreas_indrop1", "pancreas_indrop2", "pancreas_celseq", "pancreas_indrop4", "pancreas_fluidigmc1"]
 train_classes: [0, 1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15, 16]
-val_batches: [0, 1, 2, 4, 5, 6, 7]
+train_batches: [0, 1, 2, 4, 5, 6, 7]
 val_classes: [7]
 val_batches: [3]
-ignore_idx: 7
 length_train: 11237
 length_none: 2793
 length_val_type: 448

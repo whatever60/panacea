@@ -38,7 +38,7 @@ moco_temp: 0.07
 sup_temp: 0.1
 # bert
 gene_bce: True
-temp_gene: 0.001
+temp_gene: 0.0
 temp_count: 0.03
 # weights
 lambda_ibot_ss: 0.0

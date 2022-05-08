@@ -412,7 +412,6 @@ class Panacea(pl.LightningModule):
             self.hparams.num_negs,
             self.hparams.moco_temp,
             self.hparams.sup_temp,
-            self.hparams.ignore_idx,
             distributed=distributed,
         )
         self.loss_bert = BERTLoss()
