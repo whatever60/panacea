@@ -269,22 +269,30 @@ class MoCoLoss(nn.Module):
         emb_dim: int,
         num_negatives: int,
         temp: float,
-        temp_sup: float,
+        p_same_batch: float,
+        ignore_label: int,
         distributed: bool,
     ) -> None:
         super().__init__()
         self.register_buffer("queue", torch.randn(emb_dim, num_negatives))
         self.queue = nn.functional.normalize(self.queue, dim=0)
-        self.register_buffer("queue_label", torch.zeros(num_negatives))
+        self.register_buffer(
+            "queue_label", torch.full((num_negatives,), -999, dtype=torch.long)
+        )
+        self.register_buffer(
+            "queue_batch", torch.full((num_negatives,), -999, dtype=torch.long)
+        )
         self.register_buffer("queue_ptr", torch.zeros(1, dtype=torch.long))
-        self.register_buffer("queue_ptr_label", torch.zeros(1, dtype=torch.long))
-        # queue_ptr and queue_ptr_label are always the same, they are defined separately just for convenience.
 
         self.register_buffer("queue_val", torch.randn(emb_dim, num_negatives))
         self.queue_val = nn.functional.normalize(self.queue_val, dim=0)
-        self.register_buffer("queue_val_label", torch.zeros(num_negatives))
+        self.register_buffer(
+            "queue_val_label", torch.full((num_negatives,), -999, dtype=torch.long)
+        )
+        self.register_buffer(
+            "queue_val_batch", torch.full((num_negatives,), -999, dtype=torch.long)
+        )
         self.register_buffer("queue_ptr_val", torch.zeros(1, dtype=torch.long))
-        self.register_buffer("queue_ptr_label_val", torch.zeros(1, dtype=torch.long))
 
         # self.loss = nn.BCELoss()
         self.loss = nn.CrossEntropyLoss()
@@ -292,51 +300,61 @@ class MoCoLoss(nn.Module):
         self.emb_dim = emb_dim
         self.num_negatives = num_negatives
         self.temp = temp
-        self.temp_sup = temp_sup
+        self.p_same_batch = p_same_batch
+        self.ignore_label = ignore_label
         self.distributed = distributed
         self._to_enter_queue = None
         self._to_enter_queue_label = None
 
     @torch.no_grad()
-    def _dequeue_and_enqueue(self, label: bool) -> None:
-        if not label:
-            keys = self._to_enter_queue
-            if self.training:
-                queue = self.queue
-                queue_ptr = self.queue_ptr
-            else:
-                queue = self.queue_val
-                queue_ptr = self.queue_ptr_val
+    def _dequeue_and_enqueue(self) -> None:
+        if self.training:
+            queue = self.queue
+            queue_label = self.queue_label
+            queue_batch = self.queue_batch
+            queue_ptr = self.queue_ptr
         else:
-            keys = self._to_enter_queue_label
-            if self.training:
-                queue = self.queue_label
-                queue_ptr = self.queue_ptr_label
-            else:
-                queue = self.queue_val_label
-                queue_ptr = self.queue_ptr_label_val
+            queue = self.queue_val
+            queue_label = self.queue_val_label
+            queue_batch = self.queue_val_batch
+            queue_ptr = self.queue_ptr_val
 
-        if keys is None:
+        if self._to_enter_queue is None:
             return
         if self.distributed is True:
-            keys = concat_all_gather(keys)
-        batch_size = keys.shape[0]
+            self._to_enter_queue = concat_all_gather(self._to_enter_queue)
+            self._to_enter_queue_label = concat_all_gather(self._to_enter_queue_label)
+            self._to_enter_queue_batch = concat_all_gather(self._to_enter_queue_batch)
+        batch_size = self._to_enter_queue.shape[0]
         ptr = int(queue_ptr)
         # if self.num_negatives % batch_size == 0:
         #     return
         ptr_end = ptr + batch_size
         if ptr_end <= self.num_negatives:
-            queue[..., ptr : ptr + batch_size] = keys.t()
+            queue[..., ptr : ptr + batch_size] = self._to_enter_queue.t()
+            queue_label[ptr : ptr + batch_size] = self._to_enter_queue_label
+            queue_batch[ptr : ptr + batch_size] = self._to_enter_queue_batch
             ptr = (ptr + batch_size) % self.num_negatives
         else:
             delta = ptr_end - self.num_negatives
-            queue[..., ptr:] = keys.t()[..., :-delta]
-            queue[..., :delta] = keys.t()[..., -delta:]
+            queue[..., ptr:] = self._to_enter_queue.t()[..., :-delta]
+            queue[..., :delta] = self._to_enter_queue.t()[..., -delta:]
+            queue_label[ptr:] = self._to_enter_queue_label[:-delta]
+            queue_label[:delta] = self._to_enter_queue_label[-delta:]
+            queue_batch[ptr:] = self._to_enter_queue_batch[:-delta]
+            queue_batch[:delta] = self._to_enter_queue_batch[-delta:]
+
             ptr = delta
 
         queue_ptr[0] = ptr
 
-    def forward(self, cls_s: torch.Tensor, cls_t: torch.Tensor, label: torch.Tensor):
+    def forward(
+        self,
+        cls_s: torch.Tensor,
+        cls_t: torch.Tensor,
+        label: torch.Tensor,
+        batch: torch.Tensor,
+    ) -> torch.Tensor:
         # cls_s: [batch_size, num_crops_s, out_dim]
         # cls_t: [batch_size, num_crops_t, out_dim]
         # labels: [batch_size]
@@ -350,10 +368,11 @@ class MoCoLoss(nn.Module):
         l_pos = torch.einsum("bsd, bd -> bs", cls_s, cls_t).unsqueeze(-1)
         queue = self.queue if self.training else self.queue_val
         queue_label = self.queue_label if self.training else self.queue_val_label
-        self._dequeue_and_enqueue(label=False)
-        self._dequeue_and_enqueue(label=True)
+        queue_batch = self.queue_batch if self.training else self.queue_val_batch
+        self._dequeue_and_enqueue()
         self._to_enter_queue = cls_t
         self._to_enter_queue_label = label
+        self._to_enter_queue_batch = batch
         l_neg = torch.einsum("bsd, dq -> bsq", cls_s, queue)
         # [batch_size, num_crops_s, 1 + queue_size]
         logits = torch.cat([l_pos, l_neg], dim=2) / self.temp
@@ -375,17 +394,41 @@ class MoCoLoss(nn.Module):
         a = accuracy(logits, labels)
 
         # knn loss
-        ignored_samples = label.eq(self.ignore_idx)
-        if ignored_samples.all():
+        ignored = label.eq(self.ignore_label)  # no sup loss for these samples.
+        if ignored.all():
             loss_sup = 0.0
         else:
-            label = label.view(-1, 1, 1)
+            label = label[~ignored].view(-1, 1, 1)
+            batch = batch[~ignored].view(-1, 1, 1)
+            l_neg = l_neg[~ignored]
             queue_label = queue_label.view(1, 1, -1)
-            p = (l_neg / self.temp_sup).exp()
-            # get those in the queue of the same label
-            pos_idx = label == queue_label
-            p = p.masked_fill(~pos_idx, 0.0) / pos_idx.sum(dim=2, keepdim=True).clip(1.0)
-            loss_sup = -p.sum(dim=2).log1p().mean()
+            queue_batch = queue_batch.view(1, 1, -1)
+            p = l_neg.exp()
+            same_label = label == queue_label
+            same_batch = batch == queue_batch
+            # slsb for "same label same batch", sldb for "same label different batch"
+            slsb = same_label & same_batch
+            sldb = same_label & ~same_batch
+            sim_slsb = (
+                p.masked_fill(~slsb, 0) / slsb.sum(dim=2, keepdim=True).clip(1.0)
+            ).sum(dim=2)
+            sim_sldb = (
+                p.masked_fill(~sldb, 0) / sldb.sum(dim=2, keepdim=True).clip(1.0)
+            ).sum(dim=2)
+            mask_slsb = sim_slsb > 0
+            mask_sldb = sim_sldb > 0
+            
+            if mask_sldb.any():
+                # there have to be different batches in the first place.
+                loss_sldb = -sim_sldb[mask_sldb].log().mean()
+                if mask_slsb.any():
+                    loss_slsb = -sim_slsb[mask_slsb].log().mean()
+                else:
+                    loss_slsb = 0.0
+                loss_sup = (loss_sldb - loss_slsb) + self.p_same_batch * loss_slsb
+            else:
+                loss_sup = 0.0
+            
         return loss, a, loss_sup
 
 

@@ -59,8 +59,8 @@ class Panacea(pl.LightningModule):
         genes = batch["gene"]  # list
         counts = batch["count"]  # list
         masks = batch["mask"]  # list
-        target = batch["target"]
         label = batch["label"]
+        c_batch_idx = batch["batch_idx"]
         count_raw = batch["count_raw"]  # tensor
         masks_gene = [mask == 1 for mask in masks]
         masks_count = [mask == 2 for mask in masks]
@@ -138,6 +138,7 @@ class Panacea(pl.LightningModule):
             torch.stack([i[:, 0] for i in emb_s_l], dim=1),
             torch.stack([i[:, 0] for i in emb_t_l], dim=1),
             label=label,
+            batch=c_batch_idx,
         )
         log.update(
             {
@@ -411,7 +412,8 @@ class Panacea(pl.LightningModule):
             else self.hparams.head_hid_dim,
             self.hparams.num_negs,
             self.hparams.moco_temp,
-            self.hparams.sup_temp,
+            self.hparams.p_same_batch,
+            self.hparams.nan_class,
             distributed=distributed,
         )
         self.loss_bert = BERTLoss()

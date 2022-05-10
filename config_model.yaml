@@ -35,7 +35,7 @@ warmup_teacher_temp_epochs: 30
 num_negs: 8192
 moco_temp: 0.07
 # sup
-sup_temp: 0.1
+p_same_batch: 0.0
 # bert
 gene_bce: True
 temp_gene: 0.0
@@ -46,7 +46,7 @@ lambda_ibot_st: 0.1
 lambda_ibot_gene: 0.1
 lambda_ibot_count: 0.1
 lambda_moco: 1
-lambda_sup: 1
+lambda_sup: 0
 lambda_bert_gene_g: 1
 lambda_bert_count_g: 1
 lambda_bert_gene_l: 0.1

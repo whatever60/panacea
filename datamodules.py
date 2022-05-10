@@ -300,6 +300,8 @@ class PanaceaDataModule(pl.LightningDataModule):
             if not self.hparams.test:
                 self.dataset_train = SingleCellDataset(split="train", **self.hparams)
             else:
+                kwargs["length_dist"] = "uniform"
+                kwargs["min_length_g"] = kwargs["mean_length_g"] = kwargs["max_length_g"]
                 self.dataset_train = SingleCellDataset(split="train", **kwargs)
             self.dataset_val_none = SingleCellDataset(split="val_none", **kwargs)
             self.dataset_val_type = SingleCellDataset(split="val_type", **kwargs)
