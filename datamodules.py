@@ -1,4 +1,6 @@
-from typing import List, Literal, Tuple
+import os
+from typing import List, Literal, Tuple, Optional
+
 import numpy as np
 from torch.utils.data import Dataset, DataLoader
 import pytorch_lightning as pl
@@ -10,7 +12,7 @@ class SingleCellDataset(Dataset):
     def __init__(
         self,
         data_dir: str,
-        dataset_name: str,
+        data: str,
         split: str,
         classes: list,
         batches: list,
@@ -45,8 +47,9 @@ class SingleCellDataset(Dataset):
         super().__init__()
         dataset = load_dataset(
             "json",
-            data_files={split: f"{data_dir}/{dataset_name}_{split}.json.zip"},
+            data_files={split: f"{data_dir}/{data}/data/{data}_{split}.json.zip"},
             field="data",
+            split=split,
         )
 
         self.split = split
@@ -85,7 +88,7 @@ class SingleCellDataset(Dataset):
 
         # self.tokenizer = Tokenizer.from_file(f"{data_dir}/tokenizer.json")
         self.tokenizer = PreTrainedTokenizerFast(
-            tokenizer_file=f"{data_dir}/tokenizer.json"
+            tokenizer_file=f"{data_dir}/{data}/tokenizer/tokenizer.json"
         )
         self.tokenizer.add_special_tokens(
             {
@@ -96,10 +99,25 @@ class SingleCellDataset(Dataset):
                 "unk_token": "[UNK]",
             }
         )
+        if os.listdir(f"{data_dir}/{data}/gene_list"):
+            self.gene_lists = [
+                np.loadtxt(
+                    f"{data_dir}/{data}/gene_list/{i}", dtype=int
+                )
+                    for i in os.listdir(f"{data_dir}/{data}/gene_list")
+            ]
+            self.exclude_genes = [
+                np.ones(self.num_genes, dtype=bool) for _ in self.gene_lists
+            ]
+            for gene_list, exclude_gene in zip(self.gene_lists, self.exclude_genes):
+                exclude_gene[gene_list] = False
+        else:
+            self.gene_lists = None
+            self.exclude_genes = None
         self.dataset = dataset.map(self.tokenize_function, batched=True)
 
     def __len__(self):
-        return len(self.dataset[self.split])
+        return len(self.dataset)
 
     # def pad_trunc(self, input_ids, counts, attention_mask):
     #     if len(input_ids) < self.max_length:  # pad
@@ -115,22 +133,27 @@ class SingleCellDataset(Dataset):
 
     def __getitem__(self, index):
         """raw data -> sample -> generating mask -> generating target -> padding"""
-        sample = self.dataset[self.split][index]
+        sample = self.dataset[index]
         count = np.array(sample["count"].split(" ")).astype(int)
         gene = np.array(sample["input_ids"])
-        count_raw = self.to_raw(gene, count)
-        sample["count_raw"] = count_raw
+        gene_list_idx = sample.get("gene_list_idx")
+        # set it to None, and extra genes would be considered just like zero expressed genes.
+        gene_list_idx = None
 
         # 加noise和sampling谁先谁后会有很大区别吗
         # noise is only added to non-zero counts.
         count_g = self.add_noise(count, "global")
         count_l = self.add_noise(count, "local")
 
-        gene_g, count_g = zip(*(self._sample_random(gene, count) for count in count_g))
+        gene_g, count_g = zip(
+            *(self._sample_random(gene, count, gene_list_idx) for count in count_g)
+        )
         if self.num_crops_l:
             gene_l, count_l = zip(
                 *(
-                    self._sample_random(gene, count, is_global=False)
+                    self._sample_random(
+                        gene, count, is_global=False, gene_list_idx=gene_list_idx
+                    )
                     for count in count_l
                 )
             )
@@ -151,16 +174,17 @@ class SingleCellDataset(Dataset):
         del sample["input_ids"]
         del sample["attention_mask"]
         del sample["token_type_ids"]
-        del sample["library"]
 
         sample["gene"], sample["count"], sample["mask"] = genes, counts, masks
-        if sample["celltype"] is None:
-            sample["celltype"] = "nan"
+        count_raw = self.to_raw(gene, count)
+        if gene_list_idx is not None:
+            count_raw[self.exclude_genes[gene_list_idx]] = -999
+        sample["count_raw"] = count_raw
+        # if sample["celltype"] is None:
+        #     sample["celltype"] = "nan"
         sample["label"] = self.classes.index(sample["celltype"])
         sample["target"] = (
-            self.train_classes.index(sample["label"])
-            if not "val" in self.split
-            else -1
+            self.train_classes.index(sample["label"]) if not "val" in self.split else -1
         )
         sample["batch_idx"] = self.batches.index(sample["batch"])
 
@@ -219,7 +243,7 @@ class SingleCellDataset(Dataset):
         return list(res)
 
     def _sample_random(
-        self, gene, count, is_global: bool = True
+        self, gene, count, is_global: bool = True, gene_list_idx: Optional[int] = None
     ) -> Tuple[np.ndarray, np.ndarray]:
         if is_global:
             min_length = self.min_length_g
@@ -238,6 +262,8 @@ class SingleCellDataset(Dataset):
             )
         else:
             p = count_raw + self.zero_prob
+        if gene_list_idx is not None:
+            p[self.exclude_genes[gene_list_idx]] = 0
         p /= p.sum()
 
         if self.length_dist == "sample":
@@ -284,6 +310,7 @@ class PanaceaDataModule(pl.LightningDataModule):
     def __init__(
         self,
         data_dir: str,
+        data: str = "pancreas",
         test: bool = False,
         **data_config_dict,
     ):
@@ -301,11 +328,19 @@ class PanaceaDataModule(pl.LightningDataModule):
                 self.dataset_train = SingleCellDataset(split="train", **self.hparams)
             else:
                 kwargs["length_dist"] = "uniform"
-                kwargs["min_length_g"] = kwargs["mean_length_g"] = kwargs["max_length_g"]
+                kwargs["min_length_g"] = kwargs["mean_length_g"] = kwargs[
+                    "max_length_g"
+                ]
                 self.dataset_train = SingleCellDataset(split="train", **kwargs)
             self.dataset_val_none = SingleCellDataset(split="val_none", **kwargs)
-            self.dataset_val_type = SingleCellDataset(split="val_type", **kwargs)
-            self.dataset_val_batch = SingleCellDataset(split="val_batch", **kwargs)
+            try:
+                self.dataset_val_type = SingleCellDataset(split="val_type", **kwargs)
+            except FileNotFoundError:
+                self.dataset_val_type = None
+            try:
+                self.dataset_val_batch = SingleCellDataset(split="val_batch", **kwargs)
+            except FileNotFoundError:
+                self.dataset_val_batch = None
 
     def train_dataloader(self):
         return DataLoader(
@@ -317,6 +352,7 @@ class PanaceaDataModule(pl.LightningDataModule):
         )
 
     def val_dataloader(self):
+        ret = []
         loader_val_none = DataLoader(
             self.dataset_val_none,
             batch_size=self.hparams.batch_size,
@@ -324,26 +360,30 @@ class PanaceaDataModule(pl.LightningDataModule):
             num_workers=16,
             pin_memory=False if self.hparams.test else True,
         )
-
-        loader_val_type = DataLoader(
-            self.dataset_val_type,
-            batch_size=self.hparams.batch_size,
-            shuffle=False,
-            num_workers=16,
-            pin_memory=False if self.hparams.test else True,
-        )
-
-        loader_val_batch = DataLoader(
-            self.dataset_val_batch,
-            batch_size=self.hparams.batch_size,
-            shuffle=False,
-            num_workers=16,
-            pin_memory=False if self.hparams.test else True,
-        )
-        return loader_val_none, loader_val_type, loader_val_batch
+        ret.append(loader_val_none)
+        if self.dataset_val_type is not None:
+            loader_val_type = DataLoader(
+                self.dataset_val_type,
+                batch_size=self.hparams.batch_size,
+                shuffle=False,
+                num_workers=16,
+                pin_memory=False if self.hparams.test else True,
+            )
+            ret.append(loader_val_type)
+        if self.dataset_val_batch is not None:
+            loader_val_batch = DataLoader(
+                self.dataset_val_batch,
+                batch_size=self.hparams.batch_size,
+                shuffle=False,
+                num_workers=16,
+                pin_memory=False if self.hparams.test else True,
+            )
+            ret.append(loader_val_batch)
+        return ret
 
 
 if __name__ == "__main__":
+    import json
     from typing import Sequence
 
     import yaml
@@ -352,11 +392,17 @@ if __name__ == "__main__":
 
     install()
 
+    DATA = "pancreas"
+
     with open("config_data.yaml") as f:
         config = yaml.safe_load(f)
+    with open(f"configs/{DATA}.yaml") as f:
+        config.update(yaml.safe_load(f))
 
     datamodule = PanaceaDataModule(
-        data_dir="/home/tiankang/wusuowei/data/single_cell/panacea", **config
+        data_dir="/data/tiankang/wusuowei/data/single_cell/panacea",
+        data=DATA,
+        **config,
     )
     datamodule.setup(stage="fit")
     dataset = datamodule.dataset_train
@@ -370,6 +416,15 @@ if __name__ == "__main__":
             rprint([(i.shape, i.dtype) for i in v])
         elif not isinstance(v, Sequence):
             rprint(v)
+
+    test_data = {}
+    test_data["gene"] = sample["gene"][0].tolist()
+    test_data["count"] = sample["count"][0].tolist()
+    test_data["mask_gene"] = (sample["mask"][0] == 1).tolist()
+    test_data["mask_count"] = (sample["mask"][0] == 2).tolist()
+    # save to json
+    with open(f"test_data.json", "w") as f:
+        json.dump(test_data, f)
 
     rprint(dataset.tokenizer.pad_token_id)
 

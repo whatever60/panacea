@@ -1,0 +1,20 @@
+num_classes: 17
+num_batches: 8
+classes: ['alpha', 'beta', 'ductal', 'acinar', "nan", 'delta', 'gamma', 'activated_stellate', 'alpha_er', 'endothelial', 'quiescent_stellate', 'beta_er', 'macrophage', 'mast', 'epithelial', 'schwann', 'epsilon']
+batches: ['pancreas_indrop3', 'pancreas_celseq2', 'pancreas_smartseq2', 'pancreas_indrop1', 'pancreas_celseq', 'pancreas_indrop2', 'pancreas_indrop4', 'pancreas_fluidigmc1']
+# train_classes: [0, 1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+# train_batches: [0, 1, 2, 4, 5, 6, 7]
+# val_classes: [7]
+# val_batches: [3]
+train_classes: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+train_batches: [0, 1, 2, 3, 4, 5, 6, 7]
+val_classes: []
+val_batches: []
+nan_class: 4
+length_train: 13069
+length_val_none: 3266
+# length_val_type: 448
+# length_val_batch: 1937
+# tokenizer
+vocab_size: 14900
+num_genes: 14895

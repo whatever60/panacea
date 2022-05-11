@@ -1,12 +1,5 @@
-"""
-TODO:
-- 接口的参数统一一下
-- 改loss
-- 开训！
-"""
-
 import math
-from functools import lru_cache
+import os
 from typing import Literal
 
 import torch
@@ -447,7 +440,13 @@ class Panacea(pl.LightningModule):
     def get_metrics(self):
         self.ibot_metrics_train = iBOTMetrics(prefix="train")
         self.ibot_acc_train = Accuracy()
-        n = 3
+        n = sum(
+            [
+                i.startswith("length_val_")
+                for i in self.hparams.keys()
+                if isinstance(i, str)
+            ]
+        )
         self.ibot_metrics_val = nn.ModuleList(
             [iBOTMetrics(prefix="val") for _ in range(n)]
         )
@@ -532,10 +531,11 @@ def nb_pmf(
     return pmf
 
 
-def train_func(config_data: dict, config_model: dict):
-    datamodule = PanaceaDataModule(data_dir=DATA_DIR, **config_data)
+def train_func(config_dataset: dict, config_data: dict, config_model: dict):
+    config = {**config_data, **config_dataset}
+    datamodule = PanaceaDataModule(data_dir=DATA_DIR, **config)
 
-    config = {**config_model, **config_data}
+    config = {**config_model, **config_data, **config_dataset}
     model = Panacea(**config)
 
     if FAST_DEV_RUN:
@@ -609,18 +609,22 @@ if __name__ == "__main__":
     parser.add_argument("--gpus", type=int, nargs="+", default=[])
     # parser.add_argument("--num_batches", type=int, default=1, choices=[0, 1, 2, 4])
     parser.add_argument("--test", action="store_true")
+    parser.add_argument("--data", type=str, default="pancreas")
     args = parser.parse_args()
 
+    with open(f"configs/{args.data}.yaml") as f:
+        config_dataset = yaml.safe_load(f)
     with open("config_data.yaml") as f:
         config_data = yaml.safe_load(f)
     with open("config_model.yaml") as f:
         config_model = yaml.safe_load(f)
 
+    config_data["data"] = args.data
     config_model["gpus"] = args.gpus
 
-    DATA_DIR = "/home/tiankang/wusuowei/data/single_cell/panacea"
+    DATA_DIR = "/data/tiankang/wusuowei/data/single_cell/panacea"
     PROJECT = "panacea"
     GROUP = "test"
     STRATEGY = "ddp"
     FAST_DEV_RUN = args.test
-    train_func(config_data, config_model)
+    train_func(config_dataset, config_data, config_model)

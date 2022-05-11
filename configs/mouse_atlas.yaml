@@ -1,0 +1,70 @@
+num_classes: 47
+num_batches: 5
+classes: [
+  'B',
+  'myeloid',
+  'T',
+  'mesenchymal stem',
+  'endothelial',
+  'granulocyte',
+  'basal of epidermis',
+  'keratinocyte',
+  'monocyte progenitor',
+  'microglial',
+  'large intestine',
+  'fibroblast',
+  'proximal tubule',
+  'mesenchymal',
+  'sperm',
+  'erythroblast',
+  'urothelial',
+  'immature T',
+  'luminal',
+  'bladder',
+  'pancreatic endocrine',
+  'skeletal muscle satellite',
+  'hepatocyte',
+  'basal',
+  'collecting duct',
+  'pro-B',
+  'myofibroblast',
+  'oligodendrocyte',
+  'stromal',
+  'Kupffer cell',
+  'astrocyte',
+  'small intestine',
+  'pancreatic ductal',
+  'keratinocyte stem',
+  'ovary',
+  'AT2',
+  'stomach',
+  'multipotent progenitor',
+  'secretory alveoli',
+  'hepatic sinusoid',
+  'uterus',
+  'oligodendrocyte precursor',
+  'leydig',
+  'neuron',
+  'cardiac muscle',
+  'acinar',
+  'dendritic'
+]
+batches: [
+  'tabula_muris_aging_droplet',
+  'tabula_muris_aging_facs',
+  'mouse_atlas_mca',
+  'mouse_atlas_droplet',
+  'mouse_atlas_facs'
+]
+train_classes: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46]
+train_batches: [0, 1, 2, 3, 4]
+val_classes: []
+val_batches: []
+nan_class: -369
+length_train: 405636
+length_val_none: 101395
+# length_val_type: 448
+# length_val_batch: 1937
+# tokenizer
+vocab_size: 23058
+num_genes: 23053

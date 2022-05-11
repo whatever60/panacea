@@ -417,7 +417,7 @@ class MoCoLoss(nn.Module):
             ).sum(dim=2)
             mask_slsb = sim_slsb > 0
             mask_sldb = sim_sldb > 0
-            
+
             if mask_sldb.any():
                 # there have to be different batches in the first place.
                 loss_sldb = -sim_sldb[mask_sldb].log().mean()
@@ -428,7 +428,7 @@ class MoCoLoss(nn.Module):
                 loss_sup = (loss_sldb - loss_slsb) + self.p_same_batch * loss_slsb
             else:
                 loss_sup = 0.0
-            
+
         return loss, a, loss_sup
 
 
